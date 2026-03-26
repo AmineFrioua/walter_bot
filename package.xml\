@@ -4,7 +4,7 @@
   <name>walter_bot</name>
   <version>0.0.0</version>
   <description>Walter Robot ROS 2 Package</description>
-  <maintainer email="aminefrioua@gmail.com">Amine Frioua</maintainer>
+  <maintainer email="your_email@example.com">Amine Frioua</maintainer>
   <license>MIT</license>
 
   <depend>rclpy</depend>
