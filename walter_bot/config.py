@@ -8,7 +8,7 @@ LSM6DSV_ADDRESS = 0x6A
 BQ25820_ADDRESS = 0x6B
 
 # UART Communication
-UART_PORT = '/dev/ttyAMA0'
+UART_PORT = '/dev/serial0'
 UART_BAUDRATE = 115200
 
 # Sensor Configuration
