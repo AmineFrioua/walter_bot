@@ -1,0 +1,11 @@
+FollowPath:
+      plugin: "dwb_core::DWBLocalPlanner"
+      debug_trajectory_details: True
+      min_vel_x: 0.0      # This strictly forbids reversing!
+      min_vel_y: 0.0
+      max_vel_x: 0.10     # Ultra slow forward speed (10cm/s)
+      max_vel_y: 0.0
+      max_vel_theta: 0.1  # Slow and gentle turning
+      min_speed_xy: 0.0
+      max_speed_xy: 0.15
+      min_speed_theta: 0.0
