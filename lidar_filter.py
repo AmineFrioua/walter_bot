@@ -21,7 +21,7 @@ class LidarFilter(Node):
 
             # LEFT BEAM: 85° to 135°
             # RIGHT BEAM: 225° to 275°
-            if (85 < angle_deg < 135) or (225 < angle_deg < 275):
+            if (105 < angle_deg < 145) or (215 < angle_deg < 255):
                 ranges[i] = float('inf') # Erase the laser beam
 
         msg.ranges = ranges
