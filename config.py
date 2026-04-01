@@ -6,4 +6,4 @@ LIDAR_HEIGHT_M = 0.55      # Height of the LiDAR
 
 # Estimated max speed in meters per second at 255 PWM
 # (We can fine-tune this later with a stopwatch)
-MAX_SPEED_MPS = 0.5
+MAX_SPEED_MPS = 0.4
