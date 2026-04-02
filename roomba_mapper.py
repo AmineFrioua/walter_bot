@@ -23,7 +23,7 @@ def main():
     navigator = BasicNavigator()
 
     print("🟢 Waiting for Nav2 to spin up...")
-    navigator.waitUntilNav2Active()
+    # navigator.waitUntilNav2Active()
 
     input("🛑 Position Walter in the center of the room. Press ENTER to start Auto-Mapping...")
 
