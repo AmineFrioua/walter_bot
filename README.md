@@ -1,19 +1,20 @@
 # 🤖 Project Walter: Autonomous Service Robot
 
-Walter is a ROS 2 Humble-powered service robot designed for autonomous mapping, navigation, and weight-sensitive delivery. It utilizes a **staggered-boot architecture** to overcome Raspberry Pi 4 USB power limitations and a **Dual-Processor HAL** (Hardware Abstraction Layer) using an ESP32.
+Walter is a ROS 2 Humble-powered service robot built for autonomous mapping, navigation, and weight-sensitive delivery. It runs on a Raspberry Pi 4 with an RPLidar A1 for sensing, and uses a **staggered-boot architecture** to work around RPi 4 USB power limits. Hardware control is handled by a **Dual-Processor HAL** (Hardware Abstraction Layer) built around an ESP32.
 
 ---
 
-##  System Architecture
+## System Architecture
 
-### **High-Level Overview**
-This graph shows the physical and logical flow from the user down to the motors.
+### High-Level Overview
+
+This diagram shows the physical and logical flow from the operator down to the motors.
 
 ```mermaid
 graph TD
     User((User/Operator)) -->|Select Goal| UI[Web UI / Foxglove]
     UI -->|Action Goal| Nav2[Nav2 Navigation Stack]
-    
+
     subgraph RPi4 [Raspberry Pi 4 - Dockerized ROS 2]
         Nav2 -->|Path Planning| SLAM[SLAM Toolbox]
         SLAM -->|Map/Pose| Nav2
@@ -24,18 +25,19 @@ graph TD
 
     Lidar[RPLidar A1] -->|Raw Scan| Filter
     Nav2 -->|cmd_vel| Bridge
-    Bridge -->|Serial| ESP32[ESP32 Slave]
+    Bridge -->|Serial| ESP32[ESP32]
 
     subgraph Hardware [Physical Robot]
         ESP32 -->|PWM| Motors[Drive Motors]
-        LoadCell[Load Cell/SPI] -->|Weight Data| ESP32
+        LoadCell[Load Cell / SPI] -->|Weight Data| ESP32
         Cliff[Cliff Sensors] -->|Safety Stop| ESP32
         IMU[MPU6050] -->|Heading| ESP32
     end
+```
 
+### Low-Level ROS 2 Node Graph
 
-### ** Low Level ROS 2 Node **
-
+```mermaid
 graph LR
     subgraph Sensing
         N1[rplidar_node] -->|/scan_raw| N2[lidar_filter.py]
@@ -56,15 +58,21 @@ graph LR
         N4 -->|/map| N5
         N4 -->|/tf| N5
     end
-
-
-## Setup and installation 
-
-### Docker Setup 
-
-`docker build -t walter_dev .`
-
 ```
+
+---
+
+## Setup & Installation
+
+### Build the Docker Image
+
+```bash
+docker build -t walter_dev .
+```
+
+### Run the Container
+
+```bash
 docker run -it --rm \
   --name walter_dev \
   --privileged \
@@ -73,40 +81,58 @@ docker run -it --rm \
   walter_dev
 ```
 
-## Lunch Sequence 
+---
 
-### Terminal 1 
+## Launch Sequence
 
-```
+Open four terminals and run each command in order. The LiDAR is started first intentionally — see [Key Design Decisions](#key-design-decisions) for why.
+
+### Terminal 1 — LiDAR
+
+```bash
 docker exec -it walter_dev bash
-ros2 run sllidar_ros2 sllidar_node --ros-args -p serial_port:=/dev/ttyUSB0 -p serial_baudrate:=115200 -p frame_id:=laser_frame -p angle_compensate:=true -p scan_mode:=Standard
+ros2 run sllidar_ros2 sllidar_node \
+  --ros-args \
+  -p serial_port:=/dev/ttyUSB0 \
+  -p serial_baudrate:=115200 \
+  -p frame_id:=laser_frame \
+  -p angle_compensate:=true \
+  -p scan_mode:=Standard
 ```
 
-### Terminal 2 
+### Terminal 2 — Core Brain
 
-```
+```bash
 docker exec -it walter_dev bash
 ./start_brain.sh
 ```
 
-### Terminal 3 
+### Terminal 3 — Nav2 Navigation Stack
 
-```
+```bash
 docker exec -it walter_dev bash
-ros2 launch nav2_bringup navigation_launch.py use_sim_time:=False autostart:=True params_file:=/ros2_ws/config/nav2_params.yaml
+ros2 launch nav2_bringup navigation_launch.py \
+  use_sim_time:=False \
+  autostart:=True \
+  params_file:=/ros2_ws/config/nav2_params.yaml
 ```
 
-### Terminal 4
+### Terminal 4 — Mapper
 
-```
+```bash
 docker exec -it walter_dev bash
 python3 roomba_mapper.py
 ```
 
-## Key design 
+---
 
-No Reverse: Walter is configured in nav2_params.yaml with min_vel_x: 0.0. It will only move forward or turn in place.
+## Key Design Decisions
 
-Staggered Boot: To prevent the 80008002 error, the LiDAR is given a "head start" before SLAM Toolbox spikes the CPU.
+**No Reverse**
+Walter is configured in `nav2_params.yaml` with `min_vel_x: 0.0`. He will only move forward or rotate in place — no reversing.
 
-Safety First: Cliff detection is handled on the ESP32 level; if a cliff is detected, the ESP32 will override ROS commands and stop the motors instantly.
+**Staggered Boot**
+The LiDAR node is launched first (Terminal 1) before SLAM Toolbox starts. This prevents the `80008002` USB power error on the RPi 4, which occurs when the LiDAR and SLAM both spike power demand simultaneously at startup.
+
+**Hardware-Level Safety**
+Cliff detection runs entirely on the ESP32, independent of ROS. If a cliff is detected, the ESP32 immediately cuts motor power — no ROS command can override this.
