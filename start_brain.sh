@@ -20,7 +20,7 @@ echo "🧠 Starting Hardware Brain (Odometry & Motors)..."
 python3 /ros2_ws/bridge_node.py &
 
 echo "🦴 Building Skeleton..."
-ros2 run robot_state_publisher robot_state_publisher /ros2_ws/urdf/walter.urdf &
+ros2 run robot_state_publisher robot_state_publisher --ros-args -p robot_description:="$(cat /ros2_ws/urdf/walter.urdf)" &
 
 echo "🕶️ Equipping LiDAR Blinders..."
 python3 /ros2_ws/lidar_filter.py &
