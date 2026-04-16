@@ -85,8 +85,6 @@ docker run -it --rm \
 
 ## Launch Sequence
 
-Open four terminals and run each command in order. The LiDAR is started first intentionally — see [Key Design Decisions](#key-design-decisions) for why.
-
 ### Terminal 1 — LiDAR
 
 ```bash
