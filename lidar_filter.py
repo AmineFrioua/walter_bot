@@ -3,43 +3,63 @@ from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 import math
 
+BLIND_SPOTS_DEG = [101.0, 160.0, 200.0, 259.0]
+MARGIN_DEG = 5.0
+
 class LidarFilter(Node):
     def __init__(self):
         super().__init__('lidar_filter')
-        # Listen to the raw scanner
-        self.sub = self.create_subscription(LaserScan, '/scan_raw', self.scan_cb, 10)
-        # Publish the clean data to the standard topic
-        self.pub = self.create_publisher(LaserScan, '/scan', 10)
-        
-        # Configuration for the blind spots
-        self.margin = 5.0  # Erase 5 degrees on either side of the pillar
-        self.get_logger().info(f"🕶️ LiDAR Blinders Active: Filtering pillars at 101°, 160°, 200°, and 259° (±{self.margin}°).")
+
+        # Optional forward-only arc.  Set via:
+        #   ros2 run walter_bot lidar_filter --ros-args -p forward_arc_deg:=180.0
+        # Default 360 = full scan (backward compatible).
+        self.declare_parameter('forward_arc_deg', 360.0)
+        fwd_arc = self.get_parameter('forward_arc_deg').value
+        self._fwd_half = math.radians(fwd_arc / 2.0) if fwd_arc < 360.0 else None
+
+        # Pre-compute blind spot ranges in radians
+        margin_rad = math.radians(MARGIN_DEG)
+        self.blind_ranges = [
+            (math.radians(deg) - margin_rad, math.radians(deg) + margin_rad)
+            for deg in BLIND_SPOTS_DEG
+        ]
+
+        self.sub = self.create_subscription(LaserScan, '/scan', self.scan_cb, 10)
+        self.pub = self.create_publisher(LaserScan, '/scan_filtered', 10)
+
+        spots = ', '.join([f'{d}°' for d in BLIND_SPOTS_DEG])
+        fwd_label = f'{fwd_arc:.0f}° arc' if self._fwd_half else 'full 360°'
+        self.get_logger().info(
+            f'LiDAR filter active — {fwd_label}, blind spots: {spots} (±{MARGIN_DEG}°)'
+        )
 
     def scan_cb(self, msg):
         ranges = list(msg.ranges)
-        
+        angle  = msg.angle_min
+
         for i in range(len(ranges)):
-            angle_rad = msg.angle_min + (i * msg.angle_increment)
-            angle_deg = (math.degrees(angle_rad) + 360) % 360
+            # Forward-arc gate: blank beams outside the configured half-angle
+            if self._fwd_half is not None:
+                signed = angle % (2 * math.pi)
+                if signed > math.pi:
+                    signed -= 2 * math.pi
+                if abs(signed) > self._fwd_half:
+                    ranges[i] = float('inf')
+                    angle += msg.angle_increment
+                    continue
 
-            # LEFT PILLARS
-            pillar_1_left = 101.0
-            pillar_2_left = 160.0
-            
-            # RIGHT PILLARS (Symmetrical)
-            pillar_1_right = 360.0 - 101.0  # 259.0
-            pillar_2_right = 360.0 - 160.0  # 200.0
+            # Blind-spot gate: blank mount-obstruction angles
+            norm = angle % (2 * math.pi)
+            for lo, hi in self.blind_ranges:
+                if lo <= norm <= hi:
+                    ranges[i] = float('inf')
+                    break
 
-            # Check if the current laser beam hits any of the 4 pillars
-            if (abs(angle_deg - pillar_1_left) < self.margin) or \
-               (abs(angle_deg - pillar_2_left) < self.margin) or \
-               (abs(angle_deg - pillar_1_right) < self.margin) or \
-               (abs(angle_deg - pillar_2_right) < self.margin):
-                
-                ranges[i] = float('inf') # Erase the laser beam
+            angle += msg.angle_increment
 
         msg.ranges = ranges
         self.pub.publish(msg)
+
 
 def main(args=None):
     rclpy.init(args=args)

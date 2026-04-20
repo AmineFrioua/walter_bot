@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Walter</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: #0a0a0f;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+  }
+
+  /* ── Face container ── */
+  #face {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: clamp(20px, 5vw, 40px);
+    user-select: none;
+  }
+
+  /* ── Eyes ── */
+  .eyes {
+    display: flex;
+    gap: clamp(24px, 6vw, 56px);
+  }
+
+  .eye-shell {
+    width: clamp(90px, 22vw, 160px);
+    height: clamp(90px, 22vw, 160px);
+    border-radius: 50%;
+    background: #111827;
+    border: 3px solid #1e3a5f;
+    box-shadow: 0 0 30px rgba(59,130,246,0.25), inset 0 0 20px rgba(0,0,0,0.6);
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.4s, box-shadow 0.4s;
+  }
+
+  /* Iris */
+  .iris {
+    position: absolute;
+    width: 55%;
+    height: 55%;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #60a5fa, #1d4ed8 60%, #1e3a5f);
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+    will-change: transform;
+  }
+
+  /* Pupil */
+  .pupil {
+    position: absolute;
+    width: 45%;
+    height: 45%;
+    border-radius: 50%;
+    background: #05071a;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+  }
+
+  /* Specular highlight */
+  .iris::after {
+    content: '';
+    position: absolute;
+    width: 28%;
+    height: 28%;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.55);
+    top: 18%; left: 20%;
+  }
+
+  /* Eyelid (blink) */
+  .eyelid {
+    position: absolute;
+    inset: 0;
+    background: #0a0a0f;
+    border-radius: 50%;
+    clip-path: inset(100% 0 0 0);
+    transition: clip-path 0.07s ease-in;
+  }
+
+  .eye-shell.blink .eyelid {
+    clip-path: inset(0% 0 0 0);
+    transition: clip-path 0.07s ease-out;
+  }
+
+  /* ── Expression states ── */
+
+  /* HAPPY — eyes become taller ovals with upward arc bottom (squint) */
+  #face.happy .eye-shell {
+    border-color: #22c55e;
+    box-shadow: 0 0 30px rgba(34,197,94,0.35), inset 0 0 20px rgba(0,0,0,0.6);
+  }
+  #face.happy .iris {
+    background: radial-gradient(circle at 35% 35%, #86efac, #16a34a 60%, #14532d);
+  }
+
+  /* MOVING — eyes shift slightly in travel direction */
+  #face.moving .eye-shell {
+    border-color: #f59e0b;
+    box-shadow: 0 0 30px rgba(245,158,11,0.3), inset 0 0 20px rgba(0,0,0,0.6);
+  }
+  #face.moving .iris {
+    background: radial-gradient(circle at 35% 35%, #fcd34d, #d97706 60%, #78350f);
+  }
+
+  /* THINKING / turning */
+  #face.thinking .eye-shell {
+    border-color: #a855f7;
+    box-shadow: 0 0 30px rgba(168,85,247,0.3), inset 0 0 20px rgba(0,0,0,0.6);
+  }
+  #face.thinking .iris {
+    background: radial-gradient(circle at 35% 35%, #d8b4fe, #9333ea 60%, #581c87);
+  }
+
+  /* ARRIVED — big happy flash */
+  #face.arrived .eye-shell {
+    border-color: #22c55e;
+    box-shadow: 0 0 50px rgba(34,197,94,0.6), inset 0 0 20px rgba(0,0,0,0.6);
+    animation: pulse-green 0.8s ease-in-out infinite alternate;
+  }
+
+  @keyframes pulse-green {
+    from { box-shadow: 0 0 30px rgba(34,197,94,0.35); }
+    to   { box-shadow: 0 0 60px rgba(34,197,94,0.7);  }
+  }
+
+  /* ERROR */
+  #face.error .eye-shell {
+    border-color: #ef4444;
+    box-shadow: 0 0 30px rgba(239,68,68,0.4), inset 0 0 20px rgba(0,0,0,0.6);
+  }
+  #face.error .iris {
+    background: radial-gradient(circle at 35% 35%, #fca5a5, #dc2626 60%, #7f1d1d);
+  }
+
+  /* ── Status text ── */
+  #status {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: clamp(0.7rem, 2.5vw, 1rem);
+    color: #475569;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    min-height: 1.4em;
+    transition: color 0.4s;
+  }
+
+  #face.happy    #status { color: #22c55e; }
+  #face.moving   #status { color: #f59e0b; }
+  #face.thinking #status { color: #a855f7; }
+  #face.arrived  #status { color: #22c55e; }
+  #face.error    #status { color: #ef4444; }
+
+  /* ── Ambient glow ring (idle) ── */
+  #glow {
+    position: fixed;
+    inset: -20%;
+    background: radial-gradient(ellipse at center,
+      rgba(59,130,246,0.04) 0%,
+      transparent 70%);
+    pointer-events: none;
+    animation: breathe 4s ease-in-out infinite;
+  }
+
+  @keyframes breathe {
+    0%, 100% { opacity: 0.6; transform: scale(1);    }
+    50%       { opacity: 1.0; transform: scale(1.05); }
+  }
+
+  /* ── Connection lost overlay ── */
+  #conn-lost {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: monospace;
+    font-size: 0.7rem;
+    color: #374151;
+    letter-spacing: 0.1em;
+    display: none;
+  }
+  #conn-lost.visible { display: block; }
+</style>
+</head>
+<body>
+
+<div id="glow"></div>
+
+<div id="face">
+  <div class="eyes">
+    <div class="eye-shell" id="eye-left">
+      <div class="iris"><div class="pupil"></div></div>
+      <div class="eyelid"></div>
+    </div>
+    <div class="eye-shell" id="eye-right">
+      <div class="iris"><div class="pupil"></div></div>
+      <div class="eyelid"></div>
+    </div>
+  </div>
+  <div id="status">idle</div>
+</div>
+
+<div id="conn-lost">NO ROS CONNECTION</div>
+
+<script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+<script>
+const ROSBRIDGE_URL = `ws://${location.hostname}:9090`;
+
+// ── State ──────────────────────────────────────────────────────────────────
+
+const STATES = {
+  idle:      { cls: '',         label: 'idle'       },
+  moving:    { cls: 'moving',   label: 'on my way'  },
+  turning:   { cls: 'thinking', label: 'turning'    },
+  arrived:   { cls: 'arrived',  label: 'here!'      },
+  returning: { cls: 'moving',   label: 'returning'  },
+  waiting:   { cls: 'happy',    label: 'waiting…'   },
+  error:     { cls: 'error',    label: 'uh oh'      },
+};
+
+let currentState = 'idle';
+let lastVelTime  = 0;
+let idleTimer    = null;
+
+function setState(key, label) {
+  const s = STATES[key] || STATES.idle;
+  const face = document.getElementById('face');
+  face.className = s.cls;
+  document.getElementById('status').textContent = label || s.label;
+  currentState = key;
+}
+
+// ── Blink engine ──────────────────────────────────────────────────────────
+
+function blink() {
+  const eyes = document.querySelectorAll('.eye-shell');
+  eyes.forEach(e => e.classList.add('blink'));
+  setTimeout(() => eyes.forEach(e => e.classList.remove('blink')), 140);
+}
+
+function scheduleNextBlink() {
+  // Random blink: 2–6 seconds, occasionally double-blink
+  const delay = 2000 + Math.random() * 4000;
+  setTimeout(() => {
+    blink();
+    if (Math.random() < 0.25) {
+      setTimeout(blink, 250);
+    }
+    scheduleNextBlink();
+  }, delay);
+}
+
+scheduleNextBlink();
+
+// ── Pupil wander (idle) ────────────────────────────────────────────────────
+
+let pupilTarget = { x: 0, y: 0 };
+let pupilCurrent = { x: 0, y: 0 };
+
+function wanderPupils() {
+  if (currentState === 'idle') {
+    const angle = Math.random() * Math.PI * 2;
+    const dist  = Math.random() * 18;
+    pupilTarget = {
+      x: Math.cos(angle) * dist,
+      y: Math.sin(angle) * dist,
+    };
+  }
+  setTimeout(wanderPupils, 1500 + Math.random() * 2500);
+}
+
+wanderPupils();
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function animatePupils() {
+  pupilCurrent.x = lerp(pupilCurrent.x, pupilTarget.x, 0.08);
+  pupilCurrent.y = lerp(pupilCurrent.y, pupilTarget.y, 0.08);
+
+  document.querySelectorAll('.iris').forEach(iris => {
+    iris.style.transform =
+      `translate(calc(-50% + ${pupilCurrent.x}px), calc(-50% + ${pupilCurrent.y}px))`;
+  });
+
+  requestAnimationFrame(animatePupils);
+}
+animatePupils();
+
+// ── Look in travel direction ───────────────────────────────────────────────
+
+function lookAt(dx, dy) {
+  const MAX = 20;
+  const mag = Math.sqrt(dx * dx + dy * dy);
+  if (mag < 0.001) { pupilTarget = { x: 0, y: 0 }; return; }
+  pupilTarget = {
+    x:  (dx / mag) * MAX,
+    y: -(dy / mag) * MAX,  // canvas Y is inverted vs ROS Y
+  };
+}
+
+// ── ROS connection ─────────────────────────────────────────────────────────
+
+let ros;
+
+function connect() {
+  ros = new ROSLIB.Ros({ url: ROSBRIDGE_URL });
+
+  ros.on('connection', () => {
+    document.getElementById('conn-lost').classList.remove('visible');
+    subscribeTopics();
+  });
+
+  ros.on('error',  () => document.getElementById('conn-lost').classList.add('visible'));
+  ros.on('close',  () => {
+    document.getElementById('conn-lost').classList.add('visible');
+    setTimeout(connect, 3000);
+  });
+}
+
+function subscribeTopics() {
+
+  // cmd_vel — detect movement vs idle
+  const cmdVel = new ROSLIB.Topic({
+    ros, name: '/cmd_vel',
+    messageType: 'geometry_msgs/Twist',
+    throttle_rate: 100,
+  });
+  cmdVel.subscribe(msg => {
+    lastVelTime = Date.now();
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+
+    const lin = msg.linear.x;
+    const ang = msg.angular.z;
+
+    if (Math.abs(lin) > 0.01 && Math.abs(ang) < 0.3) {
+      setState('moving');
+      lookAt(lin, 0);
+    } else if (Math.abs(ang) > 0.1) {
+      setState('turning');
+      lookAt(0, ang > 0 ? 1 : -1);
+    }
+
+    // Return to idle if no cmd_vel for 1.5s
+    idleTimer = setTimeout(() => {
+      if (currentState !== 'arrived' && currentState !== 'waiting') {
+        setState('idle');
+        pupilTarget = { x: 0, y: 0 };
+      }
+    }, 1500);
+  });
+
+  // /walter/face — optional custom state topic (string)
+  // Publish "arrived", "waiting", "returning", "error", "idle" from Python
+  const faceTopic = new ROSLIB.Topic({
+    ros, name: '/walter/face',
+    messageType: 'std_msgs/String',
+  });
+  faceTopic.subscribe(msg => {
+    const key = msg.data.toLowerCase().trim();
+    if (STATES[key]) setState(key);
+  });
+}
+
+connect();
+</script>
+</body>
+</html>

@@ -1,136 +1,140 @@
-# 🤖 Project Walter: Autonomous Service Robot
+# Walter — Autonomous Delivery Robot
 
-Walter is a ROS 2 Humble-powered service robot built for autonomous mapping, navigation, and weight-sensitive delivery. It runs on a Raspberry Pi 4 with an RPLidar A1 for sensing, and uses a **staggered-boot architecture** to work around RPi 4 USB power limits. Hardware control is handled by a **Dual-Processor HAL** (Hardware Abstraction Layer) built around an ESP32.
+Walter is a ROS 2 Humble-powered differential-drive robot built for autonomous room mapping and table delivery. It runs on a Raspberry Pi 4 with an RPLidar A1M8 (UART), IMU (I2C), and I2C motor controller, all orchestrated through a single boot command.
 
 ---
 
 ## System Architecture
 
-### High-Level Overview
-
-This diagram shows the physical and logical flow from the operator down to the motors.
-
 ```mermaid
 graph TD
-    User((User/Operator)) -->|Select Goal| UI[Web UI / Foxglove]
-    UI -->|Action Goal| Nav2[Nav2 Navigation Stack]
+    User((User)) -->|Browser| WebUI[Web UI :5000]
+    WebUI -->|roslibjs WS| RosBridge[rosbridge :9090]
 
-    subgraph RPi4 [Raspberry Pi 4 - Dockerized ROS 2]
-        Nav2 -->|Path Planning| SLAM[SLAM Toolbox]
-        SLAM -->|Map/Pose| Nav2
-        Filter[LiDAR Filter Node] -->|Clean Scan| SLAM
-        Filter -->|Clean Scan| Nav2
-        Bridge[Hardware Bridge Node] -->|Odometry/IMU| Nav2
+    subgraph Docker [Docker — ROS 2 Humble]
+        RosBridge -->|goal_pose| Nav2[Nav2 Stack]
+        Nav2 -->|cmd_vel| Bridge[bridge_node.py]
+        Bridge -->|odom + TF| SLAM[SLAM Toolbox]
+        LiDAR[sllidar_node] -->|/scan| Filter[lidar_filter.py]
+        Filter -->|/scan_filtered| SLAM
+        Filter -->|/scan_filtered| Nav2
+        SLAM -->|/map| Nav2
     end
 
-    Lidar[RPLidar A1] -->|Raw Scan| Filter
-    Nav2 -->|cmd_vel| Bridge
-    Bridge -->|Serial| ESP32[ESP32]
-
-    subgraph Hardware [Physical Robot]
-        ESP32 -->|PWM| Motors[Drive Motors]
-        LoadCell[Load Cell / SPI] -->|Weight Data| ESP32
-        Cliff[Cliff Sensors] -->|Safety Stop| ESP32
-        IMU[MPU6050] -->|Heading| ESP32
-    end
-```
-
-### Low-Level ROS 2 Node Graph
-
-```mermaid
-graph LR
-    subgraph Sensing
-        N1[rplidar_node] -->|/scan_raw| N2[lidar_filter.py]
+    subgraph Pi Host
+        WebUI
+        Flask[web_server.py :5000]
+        Waypoints[(waypoints.json)]
+        Flask --- Waypoints
     end
 
-    subgraph Perception
-        N2 -->|/scan| N4[SLAM Toolbox]
-        N2 -->|/scan| N5[Nav2 Stack]
+    subgraph Hardware
+        Bridge -->|I2C 0x55| Motors[Drive Motors]
+        IMU[LSM6DS IMU 0x6A] -->|I2C| Bridge
+        RPLidar[RPLidar A1M8] -->|UART /dev/ttyAMA0| LiDAR
     end
 
-    subgraph Control
-        N3[bridge_node.py] -->|/odom| N4
-        N3 -->|/weight| M[Mission Manager]
-        N5 -->|/cmd_vel| N3
-    end
-
-    subgraph World
-        N4 -->|/map| N5
-        N4 -->|/tf| N5
-    end
+    Face[face.html — Robot Screen] -->|rosbridge WS| RosBridge
 ```
 
 ---
 
-## Setup & Installation
+## File Overview
 
-### Build the Docker Image
-
-```bash
-docker build -t walter_dev .
-```
-
-### Run the Container
-
-```bash
-docker run -it --rm \
-  --name walter_dev \
-  --privileged \
-  --network host \
-  -v $(pwd):/ros2_ws \
-  walter_dev
-```
+| File | Runs on | Purpose |
+|---|---|---|
+| `run_walter.sh` | Pi host | Powers LiDAR GPIO, launches Docker |
+| `start_brain.sh` | Docker | Staged startup: LiDAR → SLAM → Nav2 |
+| `bridge_node.py` | Docker | Motors + IMU + odometry at 50 Hz |
+| `lidar_filter.py` | Docker | Blanks mount-obstruction blind spots |
+| `roomba_mapper.py` | Docker | Autonomous room exploration |
+| `save_map.sh` | Docker | Saves SLAM map to `maps/` |
+| `slam_params.yaml` | Docker | SLAM Toolbox config |
+| `config/nav2_params.yaml` | Docker | Nav2 stack config |
+| `web_server.py` | Pi host | Flask API + serves UI (port 5000) |
+| `static/index.html` | Browser | Delivery UI — send Walter to tables |
+| `static/admin.html` | Browser | Admin — place table markers on map |
+| `static/drive.html` | Browser | Keyboard teleoperation with adjustable speed |
+| `static/face.html` | Robot screen | Animated eyes that react to robot state |
+| `waypoints.json` | Pi host | Named table coordinates (auto-created) |
 
 ---
 
-## Launch Sequence
+## Quick Start
 
-### Terminal 1 — LiDAR
-
+### 1 — One-command boot
 ```bash
-docker exec -it walter_dev bash
-ros2 run sllidar_ros2 sllidar_node \
-  --ros-args \
-  -p serial_port:=/dev/ttyUSB0 \
-  -p serial_baudrate:=115200 \
-  -p frame_id:=laser_frame \
-  -p angle_compensate:=true \
-  -p scan_mode:=Standard
+# On the Pi, from the walter_bot directory:
+./run_walter.sh
 ```
+This powers the LiDAR (GPIO 17), waits for spin-up, then starts Docker with the full ROS 2 stack.
 
-### Terminal 2 — Core Brain
-
+### 2 — Map the room
 ```bash
-docker exec -it walter_dev bash
-./start_brain.sh
-```
-
-### Terminal 3 — Nav2 Navigation Stack
-
-```bash
-docker exec -it walter_dev bash
-ros2 launch nav2_bringup navigation_launch.py \
-  use_sim_time:=False \
-  autostart:=True \
-  params_file:=/ros2_ws/config/nav2_params.yaml
-```
-
-### Terminal 4 — Mapper
-
-```bash
-docker exec -it walter_dev bash
+# In the running Docker container:
 python3 roomba_mapper.py
 ```
+Walter explores autonomously. Press `Ctrl+C` to stop early. When done:
+```bash
+bash save_map.sh          # saves maps/room_map.pgm + .yaml
+```
+
+### 3 — Start the web server
+```bash
+# On the Pi host (outside Docker):
+pip3 install flask
+python3 web_server.py
+```
+
+### 4 — Open the UI
+| URL | Purpose |
+|---|---|
+| `http://<pi-ip>:5000/` | Delivery UI |
+| `http://<pi-ip>:5000/admin` | Place table markers on map |
+| `http://<pi-ip>:5000/static/drive.html` | Keyboard teleoperation |
+| `http://<pi-ip>:5000/static/face.html` | Robot face screen |
+
+---
+
+## ROS 2 Topic Map
+
+| Topic | Type | Direction |
+|---|---|---|
+| `/scan` | `LaserScan` | LiDAR → filter |
+| `/scan_filtered` | `LaserScan` | filter → SLAM, Nav2 |
+| `/odom` | `Odometry` | bridge → SLAM, Nav2 |
+| `/imu/data_raw` | `Imu` | bridge → (optional) |
+| `/map` | `OccupancyGrid` | SLAM → Nav2, UI |
+| `/cmd_vel` | `Twist` | Nav2 → bridge |
+| `/goal_pose` | `PoseStamped` | UI → Nav2 |
+| `/walter/face` | `String` | Python scripts → face screen |
+
+---
+
+## Hardware
+
+| Component | Interface | Address / Port |
+|---|---|---|
+| RPLidar A1M8 | UART | `/dev/ttyAMA0` @ 115200 |
+| Motor controller | I2C | `0x55` |
+| LSM6DS IMU | I2C | `0x6A` |
+| LiDAR power | GPIO | Pin 17 |
+| Load cell (future) | SPI | `spidev0.0` |
 
 ---
 
 ## Key Design Decisions
 
-**No Reverse**
-Walter is configured in `nav2_params.yaml` with `min_vel_x: 0.0`. He will only move forward or rotate in place — no reversing.
+**`use_sim_time: False` everywhere** — the single most common Nav2 failure cause on real hardware. All nav2_params.yaml nodes must have this or they silently wait for `/clock` forever.
 
-**Staggered Boot**
-The LiDAR node is launched first (Terminal 1) before SLAM Toolbox starts. This prevents the `80008002` USB power error on the RPi 4, which occurs when the LiDAR and SLAM both spike power demand simultaneously at startup.
+**UART not USB** — The RPLidar A1M8 connects to `/dev/ttyAMA0` (Pi hardware serial), not `/dev/ttyUSB0`. Requires disabling the serial login shell in `raspi-config` while keeping the hardware UART enabled.
 
-**Hardware-Level Safety**
-Cliff detection runs entirely on the ESP32, independent of ROS. If a cliff is detected, the ESP32 immediately cuts motor power — no ROS command can override this.
+**No AMCL** — SLAM Toolbox handles both mapping and localization. AMCL is removed from nav2_params.yaml to avoid conflicts.
+
+**No reverse** — `min_vel_x: 0.0` in DWB planner. Walter rotates in place instead of reversing.
+
+**Outside-Docker web server** — `web_server.py` runs on the Pi host so it can access GPIO, SPI, and I2C hardware directly (load cell, battery gauge) without breaking Docker networking.
+
+**`/walter/face` topic** — Publish any of `idle`, `moving`, `arrived`, `waiting`, `returning`, `error` as a `std_msgs/String` from any Python node to update the robot's face expression.
+
+**Keyboard drive uses teleop_twist_keyboard speed model** — WASD / arrow keys move at the currently configured speed. `Q`/`Z` scale both speeds by ±10%, `=`/`-` adjust linear only, `E`/`C` angular only. Speed persists between key presses. Space or K is emergency stop. Publishes `/cmd_vel` at 10 Hz continuously so Nav2's watchdog does not trigger.

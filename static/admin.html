@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Walter — Admin</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: #1a1d27;
+    border-bottom: 1px solid #2d3148;
+    gap: 12px;
+  }
+
+  header h1 { font-size: 1.1rem; font-weight: 600; }
+
+  .header-btns { display: flex; gap: 8px; }
+
+  .btn {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    transition: background 0.15s;
+  }
+
+  .btn-primary { background: #3b82f6; color: #fff; }
+  .btn-primary:hover { background: #2563eb; }
+  .btn-danger { background: #ef4444; color: #fff; }
+  .btn-danger:hover { background: #dc2626; }
+  .btn-secondary { background: #334155; color: #e2e8f0; }
+  .btn-secondary:hover { background: #475569; }
+
+  .main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    min-height: 0;
+  }
+
+  #map-wrap {
+    position: relative;
+    background: #1a1d27;
+    overflow: hidden;
+    cursor: crosshair;
+  }
+
+  canvas#map-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+  }
+
+  canvas#scan-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+    pointer-events: none;
+  }
+
+  #scan-toggle.active {
+    border-color: #3b82f6;
+    color: #93c5fd;
+    background: #1c2d47;
+  }
+
+  .table-dot {
+    position: absolute;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: #f59e0b;
+    border: 2px solid #fff;
+    transform: translate(-50%, -50%);
+    cursor: pointer;
+    transition: transform 0.1s;
+  }
+  .table-dot:hover { transform: translate(-50%, -50%) scale(1.4); }
+
+  .table-label {
+    position: absolute;
+    transform: translate(-50%, 10px);
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 3px #000;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+
+  #robot-marker {
+    position: absolute;
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: #3b82f6;
+    border: 3px solid #fff;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    display: none;
+  }
+
+  #sidebar {
+    background: #1a1d27;
+    border-left: 1px solid #2d3148;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #sidebar-header {
+    padding: 14px 16px;
+    border-bottom: 1px solid #2d3148;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #64748b;
+  }
+
+  #table-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .table-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    background: #252836;
+    border-radius: 8px;
+  }
+
+  .table-row span { flex: 1; font-size: 0.9rem; }
+  .table-row .coords { font-size: 0.75rem; color: #64748b; font-family: monospace; }
+
+  #hint {
+    padding: 12px 16px;
+    font-size: 0.8rem;
+    color: #64748b;
+    border-top: 1px solid #2d3148;
+    line-height: 1.5;
+  }
+
+  /* Modal */
+  #modal-backdrop {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  #modal-backdrop.open { display: flex; }
+
+  #modal {
+    background: #1e2130;
+    border: 1px solid #2d3148;
+    border-radius: 14px;
+    padding: 24px;
+    width: 280px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  #modal h2 { font-size: 1rem; }
+
+  #modal input {
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid #2d3148;
+    background: #252836;
+    color: #e2e8f0;
+    font-size: 1rem;
+    width: 100%;
+  }
+
+  #modal .modal-btns { display: flex; gap: 8px; }
+  #modal .modal-btns .btn { flex: 1; padding: 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Walter — Admin</h1>
+  <div class="header-btns">
+    <button class="btn btn-secondary" id="scan-toggle">Scan</button>
+    <button class="btn btn-secondary" id="scan-clear" style="display:none">Clear</button>
+    <a href="/static/drive.html" style="text-decoration:none">
+      <button class="btn btn-secondary">Drive</button>
+    </a>
+    <a href="/" style="text-decoration:none">
+      <button class="btn btn-secondary">← Delivery</button>
+    </a>
+  </div>
+</header>
+
+<div class="main">
+  <div id="map-wrap">
+    <canvas id="map-canvas"></canvas>
+    <canvas id="scan-canvas"></canvas>
+    <div id="robot-marker"></div>
+  </div>
+
+  <div id="sidebar">
+    <div id="sidebar-header">Tables (click map to add)</div>
+    <div id="table-list"></div>
+    <div id="hint">
+      Click anywhere on the map to place a table.<br>
+      Click an existing dot to remove it.
+    </div>
+  </div>
+</div>
+
+<!-- Name modal -->
+<div id="modal-backdrop">
+  <div id="modal">
+    <h2>Name this table</h2>
+    <input id="modal-input" type="text" placeholder="e.g. Table 3" maxlength="30" autocomplete="off">
+    <div class="modal-btns">
+      <button class="btn btn-secondary" id="modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="modal-ok">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

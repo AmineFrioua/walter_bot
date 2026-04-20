@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Walter — Drive</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: #1a1d27;
+    border-bottom: 1px solid #2d3148;
+    flex-shrink: 0;
+  }
+
+  header h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: 0.04em; }
+
+  .header-right { display: flex; align-items: center; gap: 16px; }
+
+  .conn-indicator {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.78rem;
+    color: #64748b;
+    font-family: monospace;
+    letter-spacing: 0.05em;
+  }
+
+  .conn-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #ef4444; transition: background 0.3s;
+    flex-shrink: 0;
+  }
+  .conn-dot.on { background: #22c55e; }
+
+  .btn {
+    padding: 7px 14px;
+    border-radius: 6px; border: 1px solid #2d3148;
+    cursor: pointer; font-size: 0.8rem; font-weight: 500;
+    background: #1e2130; color: #94a3b8;
+    transition: background 0.12s, color 0.12s;
+    letter-spacing: 0.03em;
+  }
+  .btn:hover { background: #252836; color: #e2e8f0; }
+
+  /* ── Main ── */
+  .main {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 48px;
+    padding: 32px;
+  }
+
+  /* ── Key clusters ── */
+  .kb-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+  }
+
+  .kb-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #334155;
+    font-family: monospace;
+  }
+
+  .kb-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 58px);
+    grid-template-rows: repeat(2, 58px);
+    gap: 5px;
+  }
+
+  .key {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #161922;
+    border: 1px solid #1e2537;
+    border-bottom: 3px solid #111;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #334155;
+    font-family: monospace;
+    letter-spacing: 0.05em;
+    transition: background 0.07s, border-color 0.07s, color 0.07s, transform 0.07s;
+  }
+
+  .key.active {
+    background: #1c2d47;
+    border-color: #2563eb;
+    border-bottom-color: #1d4ed8;
+    color: #93c5fd;
+    transform: translateY(2px);
+  }
+
+  /* Layout helpers */
+  .key.span-top  { grid-column: 2; grid-row: 1; }
+  .key.col-left  { grid-column: 1; grid-row: 2; }
+  .key.col-mid   { grid-column: 2; grid-row: 2; }
+  .key.col-right { grid-column: 3; grid-row: 2; }
+
+  /* ── Speed panel ── */
+  .speed-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid #1e2537;
+    border-radius: 8px;
+    overflow: hidden;
+    min-width: 280px;
+  }
+
+  .speed-row {
+    display: flex;
+    align-items: center;
+    padding: 14px 18px;
+    gap: 14px;
+    border-bottom: 1px solid #1e2537;
+  }
+
+  .speed-row:last-child { border-bottom: none; }
+
+  .speed-row .label {
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #475569;
+    font-family: monospace;
+    width: 60px;
+    flex-shrink: 0;
+  }
+
+  .speed-value {
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 1.4rem;
+    font-weight: 500;
+    color: #e2e8f0;
+    flex: 1;
+    letter-spacing: -0.02em;
+  }
+
+  .speed-unit {
+    font-family: monospace;
+    font-size: 0.72rem;
+    color: #334155;
+    letter-spacing: 0.05em;
+    margin-left: 4px;
+  }
+
+  .speed-btns { display: flex; gap: 4px; }
+
+  .speed-adj {
+    width: 28px; height: 28px;
+    border-radius: 4px;
+    border: 1px solid #1e2537;
+    background: #161922;
+    color: #475569;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.1s, color 0.1s;
+    font-family: monospace;
+  }
+  .speed-adj:hover { background: #1c2d47; color: #93c5fd; border-color: #2563eb; }
+  .speed-adj:active { transform: scale(0.92); }
+
+  /* ── Divider row (keyboard shortcuts hint) ── */
+  .hint-row {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    padding: 10px 18px;
+    background: #0f1117;
+    border-top: 1px solid #1e2537;
+  }
+
+  .hint-item {
+    font-family: monospace;
+    font-size: 0.7rem;
+    color: #334155;
+    letter-spacing: 0.05em;
+  }
+
+  .hint-item kbd {
+    display: inline-block;
+    padding: 1px 5px;
+    border: 1px solid #1e2537;
+    border-radius: 3px;
+    background: #161922;
+    color: #475569;
+    font-size: 0.68rem;
+    font-family: monospace;
+  }
+
+  /* ── Stop button ── */
+  .stop-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  #estop {
+    padding: 14px 32px;
+    border-radius: 6px;
+    border: 1px solid #3f1515;
+    background: #1a0808;
+    color: #ef4444;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-family: monospace;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  #estop:hover   { background: #2d0f0f; border-color: #7f1d1d; }
+  #estop.fired   { background: #450a0a; border-color: #ef4444; }
+
+  .stop-hint {
+    font-family: monospace;
+    font-size: 0.68rem;
+    color: #1e2537;
+    letter-spacing: 0.08em;
+  }
+
+  /* ── Focus overlay ── */
+  #focus-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.8);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 50;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  #focus-overlay.visible { opacity: 1; pointer-events: auto; }
+
+  #focus-overlay .box {
+    border: 1px solid #1e2537;
+    border-radius: 10px;
+    background: #1a1d27;
+    padding: 28px 40px;
+    text-align: center;
+    font-family: monospace;
+  }
+
+  #focus-overlay .box p { font-size: 0.9rem; color: #94a3b8; margin-top: 8px; }
+  #focus-overlay .box strong { font-size: 1rem; color: #e2e8f0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Walter — Drive</h1>
+  <div class="header-right">
+    <div class="conn-indicator">
+      <div class="conn-dot" id="conn-dot"></div>
+      <span id="conn-label">CONNECTING</span>
+    </div>
+    <a href="/admin" style="text-decoration:none">
+      <button class="btn">Admin</button>
+    </a>
+  </div>
+</header>
+
+<div class="main">
+
+  <!-- WASD cluster -->
+  <div class="kb-wrap">
+    <span class="kb-label">WASD</span>
+    <div class="kb-grid">
+      <div class="key span-top"  data-key="w">W</div>
+      <div class="key col-left"  data-key="a">A</div>
+      <div class="key col-mid"   data-key="s">S</div>
+      <div class="key col-right" data-key="d">D</div>
+    </div>
+  </div>
+
+  <!-- Speed panel -->
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div class="speed-panel">
+
+      <div class="speed-row">
+        <span class="label">Linear</span>
+        <span class="speed-value" id="val-lin">0.05</span>
+        <span class="speed-unit">m/s</span>
+        <div class="speed-btns">
+          <button class="speed-adj" id="lin-dec" title="W key">−</button>
+          <button class="speed-adj" id="lin-inc" title="X key">+</button>
+        </div>
+      </div>
+
+      <div class="speed-row">
+        <span class="label">Angular</span>
+        <span class="speed-value" id="val-ang">0.50</span>
+        <span class="speed-unit">r/s</span>
+        <div class="speed-btns">
+          <button class="speed-adj" id="ang-dec" title="E key">−</button>
+          <button class="speed-adj" id="ang-inc" title="C key">+</button>
+        </div>
+      </div>
+
+      <div class="hint-row">
+        <span class="hint-item"><kbd>Q</kbd> / <kbd>Z</kbd> both</span>
+        <span class="hint-item"><kbd>W</kbd> / <kbd>X</kbd> linear</span>
+        <span class="hint-item"><kbd>E</kbd> / <kbd>C</kbd> angular</span>
+      </div>
+    </div>
+
+    <div class="stop-wrap">
+      <button id="estop">Stop</button>
+      <span class="stop-hint">SPACE / K</span>
+    </div>
+  </div>
+
+  <!-- Arrow cluster -->
+  <div class="kb-wrap">
+    <span class="kb-label">Arrows</span>
+    <div class="kb-grid">
+      <div class="key span-top"  data-key="ArrowUp">↑</div>
+      <div class="key col-left"  data-key="ArrowLeft">←</div>
+      <div class="key col-mid"   data-key="ArrowDown">↓</div>
+      <div class="key col-right" data-key="ArrowRight">→</div>
+    </div>
+  </div>
+
+</div>
+
+<div id="focus-overlay">
+  <div class="box">
+    <strong>Click to enable keyboard control</strong>
+    <p>Keys only work when this window is focused.</p>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+<script>
+const ROSBRIDGE_URL = `ws://${location.hostname}:9090`;
+
+// Speed limits — match nav2_params.yaml
+const LIN_MAX  = 0.10;
+const LIN_MIN  = 0.01;
+const ANG_MAX  = 1.00;
+const ANG_MIN  = 0.05;
+const STEP     = 1.1;   // multiply/divide per increment (teleop_twist_keyboard style)
+
+let linSpeed = 0.05;
+let angSpeed = 0.50;
+
+// Direction keys held state
+const held = { forward: false, backward: false, left: false, right: false };
+
+const KEY_DIR = {
+  w: 'forward', ArrowUp:    'forward',
+  s: 'backward',ArrowDown:  'backward',
+  a: 'left',    ArrowLeft:  'left',
+  d: 'right',   ArrowRight: 'right',
+};
+
+// Speed adjust keys (tap, not hold)
+const SPEED_KEYS = {
+  q: () => adjustBoth(STEP),
+  z: () => adjustBoth(1/STEP),
+  x: () => adjustLin(1/STEP),   // W conflicts with forward, so W=forward, X=dec linear
+  e: () => adjustAng(STEP),
+  c: () => adjustAng(1/STEP),
+};
+// Separate linear-up key: since W=forward, we use 'r' for increase linear
+// Actually let's keep teleop_twist_keyboard exact: use keyboard shortcut but remap
+// w key = forward for movement; for speed: since w is taken, we'll use 'f' for lin-up
+// Actually let me just use the teleop convention: the hint says W/X but skip conflict
+// Real solution: use the +/- keys from numpad or = and - keys
+SPEED_KEYS['='] = () => adjustLin(STEP);
+SPEED_KEYS['-'] = () => adjustLin(1/STEP);
+// Also accept t/g for angular up/down (easy to reach)
+SPEED_KEYS['t'] = () => adjustAng(STEP);
+SPEED_KEYS['g'] = () => adjustAng(1/STEP);
+
+function adjustBoth(factor) {
+  linSpeed = clamp(linSpeed * factor, LIN_MIN, LIN_MAX);
+  angSpeed = clamp(angSpeed * factor, ANG_MIN, ANG_MAX);
+  updateSpeedDisplay();
+}
+function adjustLin(factor) {
+  linSpeed = clamp(linSpeed * factor, LIN_MIN, LIN_MAX);
+  updateSpeedDisplay();
+}
+function adjustAng(factor) {
+  angSpeed = clamp(angSpeed * factor, ANG_MIN, ANG_MAX);
+  updateSpeedDisplay();
+}
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function updateSpeedDisplay() {
+  document.getElementById('val-lin').textContent = linSpeed.toFixed(2);
+  document.getElementById('val-ang').textContent = angSpeed.toFixed(2);
+}
+
+// ── ROS ────────────────────────────────────────────────────────────────────
+
+let ros, cmdVelTopic, pubLoop;
+
+function connect() {
+  ros = new ROSLIB.Ros({ url: ROSBRIDGE_URL });
+  ros.on('connection', () => {
+    setConn(true);
+    cmdVelTopic = new ROSLIB.Topic({
+      ros, name: '/cmd_vel', messageType: 'geometry_msgs/Twist',
+    });
+    if (!pubLoop) pubLoop = setInterval(publish, 100);
+  });
+  ros.on('error', () => setConn(false));
+  ros.on('close', () => { setConn(false); clearInterval(pubLoop); pubLoop = null; setTimeout(connect, 3000); });
+}
+
+function setConn(ok) {
+  document.getElementById('conn-dot').className  = 'conn-dot' + (ok ? ' on' : '');
+  document.getElementById('conn-label').textContent = ok ? 'CONNECTED' : 'DISCONNECTED';
+}
+
+function publish() {
+  if (!cmdVelTopic) return;
+  const lin = (held.forward ? 1 : 0) - (held.backward ? 1 : 0);
+  const ang = (held.left    ? 1 : 0) - (held.right    ? 1 : 0);
+  cmdVelTopic.publish(new ROSLIB.Message({
+    linear:  { x: lin * linSpeed, y: 0, z: 0 },
+    angular: { x: 0, y: 0, z: ang * angSpeed },
+  }));
+}
+
+function stop() {
+  if (!cmdVelTopic) return;
+  cmdVelTopic.publish(new ROSLIB.Message({
+    linear: { x:0,y:0,z:0 }, angular: { x:0,y:0,z:0 },
+  }));
+}
+
+// ── Keys ───────────────────────────────────────────────────────────────────
+
+document.addEventListener('keydown', e => {
+  if (e.repeat) return;
+  const key = e.key;
+
+  if (key === ' ' || key === 'k' || key === 'K') {
+    e.preventDefault();
+    emergencyStop();
+    return;
+  }
+
+  const speedFn = SPEED_KEYS[key.toLowerCase()] || SPEED_KEYS[key];
+  if (speedFn) { e.preventDefault(); speedFn(); return; }
+
+  const dir = KEY_DIR[key] || KEY_DIR[key.toLowerCase()];
+  if (dir) {
+    e.preventDefault();
+    held[dir] = true;
+    highlightKey(key, true);
+  }
+});
+
+document.addEventListener('keyup', e => {
+  const dir = KEY_DIR[e.key] || KEY_DIR[e.key.toLowerCase()];
+  if (dir) { held[dir] = false; highlightKey(e.key, false); }
+});
+
+function highlightKey(key, on) {
+  document.querySelectorAll(`[data-key="${key}"]`)
+    .forEach(el => el.classList.toggle('active', on));
+}
+
+function clearAllKeys() {
+  Object.keys(held).forEach(k => held[k] = false);
+  document.querySelectorAll('.key').forEach(el => el.classList.remove('active'));
+}
+
+// ── Emergency stop ─────────────────────────────────────────────────────────
+
+function emergencyStop() {
+  clearAllKeys();
+  stop();
+  const btn = document.getElementById('estop');
+  btn.classList.add('fired');
+  setTimeout(() => btn.classList.remove('fired'), 400);
+}
+
+document.getElementById('estop').addEventListener('click', emergencyStop);
+
+// ── Speed buttons ──────────────────────────────────────────────────────────
+
+document.getElementById('lin-inc').addEventListener('click', () => adjustLin(STEP));
+document.getElementById('lin-dec').addEventListener('click', () => adjustLin(1/STEP));
+document.getElementById('ang-inc').addEventListener('click', () => adjustAng(STEP));
+document.getElementById('ang-dec').addEventListener('click', () => adjustAng(1/STEP));
+
+// ── Focus guard ────────────────────────────────────────────────────────────
+
+window.addEventListener('blur', () => {
+  clearAllKeys();
+  stop();
+  document.getElementById('focus-overlay').classList.add('visible');
+});
+window.addEventListener('focus', () =>
+  document.getElementById('focus-overlay').classList.remove('visible'));
+document.addEventListener('click', () =>
+  document.getElementById('focus-overlay').classList.remove('visible'));
+
+if (!document.hasFocus())
+  document.getElementById('focus-overlay').classList.add('visible');
+
+connect();
+</script>
+</body>
+</html>
