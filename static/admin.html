@@ -24,29 +24,31 @@
     background: #1a1d27;
     border-bottom: 1px solid #2d3148;
     gap: 12px;
+    flex-shrink: 0;
   }
 
   header h1 { font-size: 1.1rem; font-weight: 600; }
-
-  .header-btns { display: flex; gap: 8px; }
+  .header-btns { display: flex; gap: 8px; flex-wrap: wrap; }
 
   .btn {
-    padding: 8px 16px;
-    border-radius: 8px;
-    border: none;
+    padding: 7px 14px;
+    border-radius: 6px;
+    border: 1px solid #2d3148;
     cursor: pointer;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     font-weight: 600;
-    transition: background 0.15s;
+    background: #1e2130;
+    color: #94a3b8;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
   }
+  .btn:hover { background: #252836; color: #e2e8f0; }
+  .btn.active { border-color: #3b82f6; color: #93c5fd; background: #1c2d47; }
+  .btn-danger { background: #1a0808; border-color: #3f1515; color: #ef4444; }
+  .btn-danger:hover { background: #2d0f0f; }
+  .btn-primary { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+  .btn-primary:hover { background: #1c2d47; }
 
-  .btn-primary { background: #3b82f6; color: #fff; }
-  .btn-primary:hover { background: #2563eb; }
-  .btn-danger { background: #ef4444; color: #fff; }
-  .btn-danger:hover { background: #dc2626; }
-  .btn-secondary { background: #334155; color: #e2e8f0; }
-  .btn-secondary:hover { background: #475569; }
-
+  /* ── Main layout ── */
   .main {
     flex: 1;
     display: grid;
@@ -54,9 +56,10 @@
     min-height: 0;
   }
 
+  /* ── Map ── */
   #map-wrap {
     position: relative;
-    background: #1a1d27;
+    background: #0a0c12;
     overflow: hidden;
     cursor: crosshair;
   }
@@ -77,15 +80,9 @@
     pointer-events: none;
   }
 
-  #scan-toggle.active {
-    border-color: #3b82f6;
-    color: #93c5fd;
-    background: #1c2d47;
-  }
-
   .table-dot {
     position: absolute;
-    width: 18px; height: 18px;
+    width: 16px; height: 16px;
     border-radius: 50%;
     background: #f59e0b;
     border: 2px solid #fff;
@@ -98,7 +95,7 @@
   .table-label {
     position: absolute;
     transform: translate(-50%, 10px);
-    font-size: 0.7rem;
+    font-size: 0.68rem;
     font-weight: 700;
     color: #fff;
     text-shadow: 0 1px 3px #000;
@@ -108,7 +105,7 @@
 
   #robot-marker {
     position: absolute;
-    width: 20px; height: 20px;
+    width: 18px; height: 18px;
     border-radius: 50%;
     background: #3b82f6;
     border: 3px solid #fff;
@@ -117,6 +114,18 @@
     display: none;
   }
 
+  /* Map status overlay */
+  #map-status {
+    position: absolute;
+    bottom: 10px; left: 10px;
+    font-family: monospace;
+    font-size: 0.68rem;
+    color: #334155;
+    letter-spacing: 0.05em;
+    pointer-events: none;
+  }
+
+  /* ── Sidebar ── */
   #sidebar {
     background: #1a1d27;
     border-left: 1px solid #2d3148;
@@ -125,13 +134,36 @@
     overflow: hidden;
   }
 
-  #sidebar-header {
-    padding: 14px 16px;
+  /* Tab bar */
+  .tab-bar {
+    display: flex;
     border-bottom: 1px solid #2d3148;
-    font-size: 0.85rem;
+    flex-shrink: 0;
+  }
+
+  .tab-btn {
+    flex: 1;
+    padding: 12px 8px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #475569;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #64748b;
+    letter-spacing: 0.1em;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .tab-btn.active { color: #e2e8f0; border-bottom-color: #3b82f6; }
+
+  /* ── Tables panel ── */
+  #panel-tables {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
   }
 
   #table-list {
@@ -147,27 +179,168 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 12px;
+    padding: 9px 12px;
     background: #252836;
-    border-radius: 8px;
+    border-radius: 6px;
   }
-
-  .table-row span { flex: 1; font-size: 0.9rem; }
-  .table-row .coords { font-size: 0.75rem; color: #64748b; font-family: monospace; }
+  .table-row span { flex: 1; font-size: 0.88rem; }
+  .table-row .coords { font-size: 0.72rem; color: #64748b; font-family: monospace; }
 
   #hint {
-    padding: 12px 16px;
-    font-size: 0.8rem;
-    color: #64748b;
+    padding: 12px 14px;
+    font-size: 0.75rem;
+    color: #334155;
     border-top: 1px solid #2d3148;
-    line-height: 1.5;
+    line-height: 1.6;
+    flex-shrink: 0;
   }
 
-  /* Modal */
+  /* ── Drive panel ── */
+  #panel-drive {
+    flex: 1;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px 12px;
+    gap: 14px;
+    overflow-y: auto;
+  }
+  #panel-drive.visible { display: flex; }
+
+  /* D-pad */
+  .dpad {
+    display: grid;
+    grid-template-columns: repeat(3, 70px);
+    grid-template-rows: repeat(3, 70px);
+    gap: 5px;
+  }
+
+  .dpad-btn {
+    background: #161922;
+    border: 1px solid #1e2537;
+    border-bottom: 3px solid #0a0c12;
+    border-radius: 8px;
+    color: #334155;
+    font-size: 1.2rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.07s, border-color 0.07s, color 0.07s, transform 0.07s;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+    user-select: none;
+  }
+
+  .dpad-btn.pressed {
+    background: #1c2d47;
+    border-color: #2563eb;
+    border-bottom-color: #1d4ed8;
+    color: #93c5fd;
+    transform: translateY(2px);
+  }
+
+  .dpad-stop {
+    border-color: #3f1515;
+    background: #160a0a;
+    color: #ef4444;
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+  }
+  .dpad-stop.pressed { background: #3a0f0f; border-color: #ef4444; color: #fca5a5; }
+
+  /* Speed section */
+  .speed-section {
+    width: 100%;
+    border: 1px solid #1e2537;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .speed-row {
+    display: flex;
+    align-items: center;
+    padding: 10px 14px;
+    gap: 8px;
+    border-bottom: 1px solid #1e2537;
+  }
+  .speed-row:last-of-type { border-bottom: none; }
+
+  .speed-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #475569;
+    font-family: monospace;
+    width: 52px;
+    flex-shrink: 0;
+  }
+
+  .speed-val {
+    font-family: monospace;
+    font-size: 1.15rem;
+    font-weight: 500;
+    color: #e2e8f0;
+    flex: 1;
+  }
+
+  .speed-unit {
+    font-family: monospace;
+    font-size: 0.65rem;
+    color: #334155;
+  }
+
+  .speed-btns { display: flex; gap: 4px; }
+
+  .speed-adj {
+    width: 26px; height: 26px;
+    border-radius: 4px;
+    border: 1px solid #1e2537;
+    background: #0f1117;
+    color: #475569;
+    font-size: 0.9rem;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.1s, color 0.1s;
+  }
+  .speed-adj:hover { background: #1c2d47; color: #93c5fd; border-color: #2563eb; }
+
+  .speed-hint {
+    padding: 7px 14px;
+    font-family: monospace;
+    font-size: 0.63rem;
+    color: #252836;
+    letter-spacing: 0.04em;
+    border-top: 1px solid #1e2537;
+    text-align: center;
+  }
+
+  /* E-stop */
+  #d-estop {
+    width: 100%;
+    padding: 13px;
+    border-radius: 6px;
+    border: 1px solid #3f1515;
+    background: #160a0a;
+    color: #ef4444;
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    font-family: monospace;
+    transition: background 0.1s;
+    flex-shrink: 0;
+  }
+  #d-estop:hover { background: #2d0f0f; }
+  #d-estop.fired { background: #450a0a; border-color: #ef4444; }
+
+  /* ── Modal ── */
   #modal-backdrop {
     display: none;
     position: fixed; inset: 0;
-    background: rgba(0,0,0,0.7);
+    background: rgba(0,0,0,0.75);
     align-items: center;
     justify-content: center;
     z-index: 100;
@@ -177,19 +350,19 @@
   #modal {
     background: #1e2130;
     border: 1px solid #2d3148;
-    border-radius: 14px;
-    padding: 24px;
-    width: 280px;
+    border-radius: 12px;
+    padding: 22px;
+    width: 270px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
   }
 
-  #modal h2 { font-size: 1rem; }
+  #modal h2 { font-size: 0.95rem; }
 
   #modal input {
     padding: 10px 12px;
-    border-radius: 8px;
+    border-radius: 6px;
     border: 1px solid #2d3148;
     background: #252836;
     color: #e2e8f0;
@@ -206,13 +379,11 @@
 <header>
   <h1>Walter — Admin</h1>
   <div class="header-btns">
-    <button class="btn btn-secondary" id="scan-toggle">Scan</button>
-    <button class="btn btn-secondary" id="scan-clear" style="display:none">Clear</button>
-    <a href="/static/drive.html" style="text-decoration:none">
-      <button class="btn btn-secondary">Drive</button>
-    </a>
+    <button class="btn" id="arc-toggle" title="Toggle forward-only LiDAR arc">Full scan</button>
+    <button class="btn" id="scan-toggle">Scan</button>
+    <button class="btn" id="scan-clear" style="display:none">Clear</button>
     <a href="/" style="text-decoration:none">
-      <button class="btn btn-secondary">← Delivery</button>
+      <button class="btn">← Delivery</button>
     </a>
   </div>
 </header>
@@ -222,14 +393,61 @@
     <canvas id="map-canvas"></canvas>
     <canvas id="scan-canvas"></canvas>
     <div id="robot-marker"></div>
+    <div id="map-status">No map</div>
   </div>
 
   <div id="sidebar">
-    <div id="sidebar-header">Tables (click map to add)</div>
-    <div id="table-list"></div>
-    <div id="hint">
-      Click anywhere on the map to place a table.<br>
-      Click an existing dot to remove it.
+    <div class="tab-bar">
+      <button class="tab-btn active" id="tab-tables">Tables</button>
+      <button class="tab-btn"        id="tab-drive">Drive</button>
+    </div>
+
+    <!-- Tables panel -->
+    <div id="panel-tables">
+      <div id="table-list"></div>
+      <div id="hint">
+        Click anywhere on the map to place a table.<br>
+        Click a dot to remove it.
+      </div>
+    </div>
+
+    <!-- Drive panel -->
+    <div id="panel-drive">
+      <div class="dpad">
+        <div></div>
+        <button class="dpad-btn" id="dpad-fwd"   data-dir="forward">↑</button>
+        <div></div>
+        <button class="dpad-btn" id="dpad-left"  data-dir="left">←</button>
+        <button class="dpad-btn dpad-stop" id="dpad-stop">stop</button>
+        <button class="dpad-btn" id="dpad-right" data-dir="right">→</button>
+        <div></div>
+        <button class="dpad-btn" id="dpad-back"  data-dir="backward">↓</button>
+        <div></div>
+      </div>
+
+      <div class="speed-section">
+        <div class="speed-row">
+          <span class="speed-label">Linear</span>
+          <span class="speed-val" id="d-val-lin">0.05</span>
+          <span class="speed-unit">m/s</span>
+          <div class="speed-btns">
+            <button class="speed-adj" id="d-lin-dec">−</button>
+            <button class="speed-adj" id="d-lin-inc">+</button>
+          </div>
+        </div>
+        <div class="speed-row">
+          <span class="speed-label">Angular</span>
+          <span class="speed-val" id="d-val-ang">0.50</span>
+          <span class="speed-unit">r/s</span>
+          <div class="speed-btns">
+            <button class="speed-adj" id="d-ang-dec">−</button>
+            <button class="speed-adj" id="d-ang-inc">+</button>
+          </div>
+        </div>
+        <div class="speed-hint">Q / Z  both &nbsp;|&nbsp; = / -  linear &nbsp;|&nbsp; E / C  angular</div>
+      </div>
+
+      <button id="d-estop">Stop &nbsp; [space]</button>
     </div>
   </div>
 </div>
@@ -240,7 +458,7 @@
     <h2>Name this table</h2>
     <input id="modal-input" type="text" placeholder="e.g. Table 3" maxlength="30" autocomplete="off">
     <div class="modal-btns">
-      <button class="btn btn-secondary" id="modal-cancel">Cancel</button>
+      <button class="btn" id="modal-cancel">Cancel</button>
       <button class="btn btn-primary" id="modal-ok">Save</button>
     </div>
   </div>

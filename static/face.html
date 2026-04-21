@@ -327,6 +327,14 @@ function connect() {
   });
 }
 
+function revertToIdle() {
+  idleTimer = null;
+  if (currentState !== 'arrived' && currentState !== 'waiting') {
+    setState('idle');
+    pupilTarget = { x: 0, y: 0 };
+  }
+}
+
 function subscribeTopics() {
 
   // cmd_vel — detect movement vs idle
@@ -336,27 +344,29 @@ function subscribeTopics() {
     throttle_rate: 100,
   });
   cmdVel.subscribe(msg => {
-    lastVelTime = Date.now();
-    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-
     const lin = msg.linear.x;
     const ang = msg.angular.z;
+    const isMoving  = Math.abs(lin) > 0.01 && Math.abs(ang) < 0.3;
+    const isTurning = Math.abs(ang) > 0.1;
 
-    if (Math.abs(lin) > 0.01 && Math.abs(ang) < 0.3) {
+    if (isMoving) {
+      clearTimeout(idleTimer); idleTimer = null;
       setState('moving');
       lookAt(lin, 0);
-    } else if (Math.abs(ang) > 0.1) {
+      // Fallback in case messages stop entirely without a zero-vel message
+      idleTimer = setTimeout(revertToIdle, 1500);
+    } else if (isTurning) {
+      clearTimeout(idleTimer); idleTimer = null;
       setState('turning');
       lookAt(0, ang > 0 ? 1 : -1);
-    }
-
-    // Return to idle if no cmd_vel for 1.5s
-    idleTimer = setTimeout(() => {
-      if (currentState !== 'arrived' && currentState !== 'waiting') {
-        setState('idle');
-        pupilTarget = { x: 0, y: 0 };
+      idleTimer = setTimeout(revertToIdle, 1500);
+    } else {
+      // Zero/near-zero velocity — start the countdown once; don't reset it
+      // on every repeated zero message (Nav2 floods zeros at ~10 Hz when stopped)
+      if (!idleTimer) {
+        idleTimer = setTimeout(revertToIdle, 400);
       }
-    }, 1500);
+    }
   });
 
   // /walter/face — optional custom state topic (string)
