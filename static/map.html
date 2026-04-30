@@ -303,6 +303,15 @@ header {
       <div class="sect">
         <button class="estop" id="estop-btn">Emergency Stop [space]</button>
       </div>
+      <div class="sect">
+        <span class="sect-lbl">Map</span>
+        <div style="display:flex;gap:5px;align-items:center">
+          <input id="map-name-inp" class="form-inp" type="text" value="room_map" placeholder="map name" style="flex:1;padding:5px 8px;font-size:.72rem">
+          <button class="btn btn-primary" id="save-map-btn" style="flex-shrink:0;white-space:nowrap">Save</button>
+        </div>
+        <div id="save-map-status" style="font-size:.65rem;font-family:monospace;color:#334155;min-height:1.2em"></div>
+        <p style="font-size:.6rem;color:#1e2537;line-height:1.5">Auto-saved every 2 min while running.</p>
+      </div>
     </div>
 
     <!-- EDIT tab -->
@@ -934,6 +943,37 @@ window.addEventListener('blur',()=>{Object.keys(held).forEach(k=>held[k]=false);
 window.addEventListener('resize',()=>{renderOverlay();updateRobot();});
 
 // ── Init ──────────────────────────────────────────────────────────────────
+// ── Save Map ──────────────────────────────────────────────────────────────
+document.getElementById('save-map-btn').addEventListener('click', async () => {
+  const name = document.getElementById('map-name-inp').value.trim() || 'room_map';
+  const btn  = document.getElementById('save-map-btn');
+  const stat = document.getElementById('save-map-status');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  stat.style.color = '#334155';
+  stat.textContent = 'Running map_saver…';
+  try {
+    const res = await fetch('/api/save_map', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      stat.style.color = '#22c55e';
+      stat.textContent = `✓ Saved as "${name}"`;
+    } else {
+      stat.style.color = '#ef4444';
+      stat.textContent = '✗ ' + (data.error || 'Failed');
+    }
+  } catch (e) {
+    stat.style.color = '#ef4444';
+    stat.textContent = '✗ ' + e.message;
+  }
+  btn.disabled = false;
+  btn.textContent = 'Save';
+});
+
 loadWaypoints();
 connect();
 </script>

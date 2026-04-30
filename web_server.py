@@ -6,7 +6,7 @@ The browser talks to ROS via rosbridge at ws://localhost:9090.
 """
 
 from flask import Flask, jsonify, request, send_from_directory
-import json, os, math
+import json, os, math, subprocess
 
 app = Flask(__name__, static_folder='static')
 
@@ -69,6 +69,29 @@ def delete_waypoint(name):
     del waypoints[name]
     save_waypoints(waypoints)
     return jsonify({'ok': True})
+
+
+# ── Map save API ──────────────────────────────────────────────────────────────
+
+@app.route('/api/save_map', methods=['POST'])
+def save_map():
+    body = request.get_json(silent=True) or {}
+    map_name = body.get('name', 'room_map').strip() or 'room_map'
+    # Sanitise: only allow alphanumeric + underscore/hyphen
+    map_name = ''.join(c for c in map_name if c.isalnum() or c in ('_', '-'))
+    try:
+        result = subprocess.run(
+            ['docker', 'exec', 'walter_dev', 'bash', '/ros2_ws/save_map.sh', map_name],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            return jsonify({'ok': True, 'name': map_name, 'output': result.stdout.strip()})
+        else:
+            return jsonify({'ok': False, 'error': result.stderr.strip()}), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({'ok': False, 'error': 'Timed out after 30 s'}), 500
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 # ── Config API ────────────────────────────────────────────────────────────────
