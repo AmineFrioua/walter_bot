@@ -209,6 +209,17 @@ header {
 #modal h3 { font-size:.88rem; font-weight:700; }
 .modal-btns { display:flex; gap:7px; }
 .modal-btns .btn { flex:1; padding:9px; }
+@media (max-width: 640px) {
+  .workspace { flex-direction: column; }
+  #map-area  { height: 55dvh; flex: none; }
+  #panel     { width: 100%; max-height: 45dvh; overflow-y: auto;
+               border-left: none; border-top: 1px solid #1a1d2e; flex-shrink: 0; }
+  .dpad      { grid-template-columns: repeat(3, 62px);
+               grid-template-rows:    repeat(3, 62px); }
+  .dk        { font-size: 1.3rem; }
+  .tab-btn   { padding: 5px 10px; font-size: .65rem; }
+  #front-banner { font-size: .65rem; }
+}
 </style>
 </head>
 <body>
