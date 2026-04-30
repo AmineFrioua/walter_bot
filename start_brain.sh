@@ -1,8 +1,8 @@
 #!/bin/bash
 # Usage:
-#   bash start_brain.sh             → mapping mode (default)
-#   bash start_brain.sh navigate    → navigation mode (needs a saved map)
-#   bash start_brain.sh navigate my_map  → navigate with specific map name
+#   bash start_brain.sh              → mapping mode (default)
+#   bash start_brain.sh navigate     → production mode (AMCL + Nav2, no SLAM)
+#   bash start_brain.sh navigate my_map
 
 MODE="${1:-mapping}"
 MAP_NAME="${2:-room_map}"
@@ -14,7 +14,7 @@ cleanup() {
     echo "🔴 Shutting down Walter cleanly..."
     if [ "$MODE" = "mapping" ]; then
         echo "💾 Auto-saving map before exit..."
-        bash /ros2_ws/save_map.sh "${MAP_NAME}_shutdown" 2>/dev/null || true
+        bash /ros2_ws/save_map.sh "${MAP_NAME}" 2>/dev/null || true
     fi
     kill $(jobs -p) 2>/dev/null
     wait $(jobs -p) 2>/dev/null
@@ -56,49 +56,59 @@ echo "📺 Starting rosbridge..."
 ros2 run rosbridge_server rosbridge_websocket > /dev/null 2>&1 &
 ros2 run rosapi rosapi_node > /dev/null 2>&1 &
 
-# --- STAGE 3: mode-specific ---
+# ─────────────────────────────────────────────────────────────────────────────
+# MAPPING MODE — SLAM Toolbox only, no Nav2
+# Heavy during use, but you only do this once to build the map.
+# ─────────────────────────────────────────────────────────────────────────────
 if [ "$MODE" = "mapping" ]; then
-    echo "🗺️ Starting SLAM Toolbox (mapping)..."
+    echo "🗺️  Starting SLAM Toolbox (mapping mode — no Nav2)..."
     ros2 launch slam_toolbox online_async_launch.py \
       slam_params_file:=/ros2_ws/slam_params.yaml > /dev/null 2>&1 &
 
     echo "⏳ Waiting for SLAM to settle..."
     sleep 5
 
-    # Auto-save map every 2 minutes in the background
-    echo "💾 Auto-save enabled (every 2 min → maps/${MAP_NAME})"
+    # Auto-save map every 2 minutes
+    echo "💾 Auto-save active (every 2 min → maps/${MAP_NAME})"
     (while true; do
         sleep 120
         bash /ros2_ws/save_map.sh "$MAP_NAME" > /dev/null 2>&1 \
-            && echo "💾 [$(date +%H:%M:%S)] Map auto-saved → maps/${MAP_NAME}" \
-            || echo "⚠️  Map auto-save failed"
+            && echo "💾 [$(date +%H:%M:%S)] Auto-saved → maps/${MAP_NAME}" \
+            || echo "⚠️  Auto-save failed"
     done) &
 
-    echo "✅ Walter is mapping. Drive around, then press Save Map in the UI."
+    echo ""
+    echo "✅ Mapping. Drive around, then Save Map in the UI (or Ctrl+C)."
+    echo "   When done: restart with  ./run_walter.sh  (auto-detects saved map)"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# NAVIGATE MODE — AMCL + Nav2, no SLAM
+# This is the production/daily mode. Much lighter than mapping.
+# Requires a saved map in /ros2_ws/maps/<name>.yaml
+# ─────────────────────────────────────────────────────────────────────────────
 elif [ "$MODE" = "navigate" ]; then
     if [ ! -f "${MAP_FILE}.yaml" ]; then
         echo "❌ Map not found: ${MAP_FILE}.yaml"
-        echo "   Run in mapping mode first, save the map, then restart with: navigate ${MAP_NAME}"
+        echo "   Run  ./run_walter.sh mapping  first, save the map, then restart."
         exit 1
     fi
-    echo "🗺️ Starting Map Server (${MAP_NAME})..."
-    ros2 run nav2_map_server map_server \
-      --ros-args -p yaml_filename:="${MAP_FILE}.yaml" > /dev/null 2>&1 &
 
-    echo "📍 Starting AMCL (localisation)..."
-    ros2 run nav2_amcl amcl \
-      --ros-args --params-file /ros2_ws/config/nav2_params.yaml > /dev/null 2>&1 &
+    echo "🗺️  Starting Nav2 with saved map: ${MAP_NAME}"
+    echo "    (map_server + AMCL + planner + controller — no SLAM)"
 
-    sleep 4
-
-    echo "🧭 Starting Nav2..."
-    ros2 launch nav2_bringup navigation_launch.py \
+    # nav2_bringup's bringup_launch includes map_server, AMCL, and full Nav2 stack
+    ros2 launch nav2_bringup bringup_launch.py \
       use_sim_time:=False \
       autostart:=True \
+      map:="${MAP_FILE}.yaml" \
       params_file:=/ros2_ws/config/nav2_params.yaml > /dev/null 2>&1 &
 
-    echo "✅ Walter is navigating with map: ${MAP_NAME}"
+    echo "⏳ Waiting for Nav2 to initialise..."
+    sleep 8
+
+    echo ""
+    echo "✅ Walter is live. AMCL localising on saved map."
+    echo "   Use Delivery mode in the UI to send navigation goals."
 fi
 
 echo "Press Ctrl+C to stop."
