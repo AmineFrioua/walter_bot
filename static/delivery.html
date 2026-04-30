@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Walter — Delivery</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0f1117; color: #e2e8f0;
+  height: 100dvh; display: flex; flex-direction: column; overflow: hidden;
+}
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; background: #0d0f18;
+  border-bottom: 1px solid #1a1d2e; flex-shrink: 0;
+}
+.back { text-decoration: none; color: #334155; font-size: .85rem; }
+.back:hover { color: #60a5fa; }
+.hdr-title { font-size: .9rem; font-weight: 700; }
+.conn { display: flex; align-items: center; gap: 6px; font-size: .72rem; font-family: monospace; color: #475569; }
+.conn-dot { width:7px; height:7px; border-radius:50%; background:#334155; }
+.conn-dot.ok  { background:#22c55e; }
+.conn-dot.err { background:#ef4444; }
+
+main {
+  flex: 1; display: flex; flex-direction: column; gap: 12px;
+  padding: 16px; overflow-y: auto; max-width: 520px; width: 100%; margin: 0 auto;
+}
+
+/* Status */
+.status-card {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; background: #13151f;
+  border-radius: 10px; border: 1px solid #1a1d2e; flex-shrink: 0;
+}
+.status-dot { width:10px; height:10px; border-radius:50%; background:#334155; transition: background .3s; }
+.status-dot.idle    { background:#334155; }
+.status-dot.moving  { background:#f59e0b; }
+.status-dot.arrived { background:#22c55e; }
+.status-text { font-size: .85rem; color: #94a3b8; }
+
+/* Table list */
+.sect-label {
+  font-size:.6rem; text-transform:uppercase; letter-spacing:.1em;
+  color:#334155; font-weight:700;
+}
+#table-list { display: flex; flex-direction: column; gap: 6px; }
+.tbl-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; background: #13151f;
+  border-radius: 8px; border: 1px solid #1a1d2e;
+  cursor: pointer; transition: border-color .12s, background .12s;
+}
+.tbl-row:hover { background: #161927; border-color: #253050; }
+.tbl-row.selected { border-color: #3b82f6; background: #1c2d47; }
+.tbl-num {
+  width: 32px; height: 32px; border-radius: 7px;
+  background: #1a1d2e; display: flex; align-items: center; justify-content: center;
+  font-size: .8rem; font-weight: 700; color: #475569; flex-shrink: 0;
+}
+.tbl-row.selected .tbl-num { background: #1c3566; color: #60a5fa; }
+.tbl-meta { flex: 1; min-width: 0; }
+.tbl-name { font-size: .85rem; font-weight: 600; }
+.tbl-dims { font-size: .65rem; color: #334155; font-family: monospace; }
+.empty { font-size: .75rem; color: #334155; padding: 8px 0; }
+
+/* Buttons */
+.btn {
+  width: 100%; padding: 12px; border-radius: 8px; border: none;
+  font-size: .82rem; font-weight: 700; cursor: pointer;
+  letter-spacing: .04em; transition: background .12s; flex-shrink: 0;
+}
+.btn-send   { background: #1e3a5f; color: #93c5fd; border: 1px solid #3b82f6; }
+.btn-send:hover:not(:disabled) { background: #1c3566; }
+.btn-send:disabled { opacity: .4; cursor: not-allowed; }
+.btn-cancel { background: #140606; color: #ef4444; border: 1px solid #3f1515; display: none; }
+.btn-cancel:hover { background: #2d0f0f; }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="/">← Back</a>
+  <span class="hdr-title">Delivery</span>
+  <div class="conn">
+    <div class="conn-dot" id="conn-dot"></div>
+    <span id="conn-label">Connecting</span>
+  </div>
+</header>
+
+<main>
+  <div class="status-card">
+    <div class="status-dot idle" id="status-dot"></div>
+    <span class="status-text" id="status-text">Idle — select a table below</span>
+  </div>
+
+  <span class="sect-label">Tables</span>
+  <div id="table-list"><p class="empty">Loading…</p></div>
+
+  <button class="btn btn-send" id="send-btn" disabled>Send Walter</button>
+  <button class="btn btn-cancel" id="cancel-btn">Cancel — Return to Origin</button>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+<script>
+const ROSBRIDGE = `ws://${location.hostname}:9090`;
+let ros, goalPub, cmdVel;
+let waypoints = {}, selectedKey = null, delivering = false;
+
+// ── ROS ───────────────────────────────────────────────────────────────────
+
+function connect() {
+  ros = new ROSLIB.Ros({ url: ROSBRIDGE });
+  ros.on('connection', () => {
+    setConn(true);
+    goalPub = new ROSLIB.Topic({ ros, name:'/goal_pose', messageType:'geometry_msgs/PoseStamped' });
+    cmdVel  = new ROSLIB.Topic({ ros, name:'/cmd_vel',   messageType:'geometry_msgs/Twist' });
+    subscribeNavStatus();
+  });
+  ros.on('error', () => setConn(false));
+  ros.on('close', () => { setConn(false); setTimeout(connect, 3000); });
+}
+function setConn(ok) {
+  document.getElementById('conn-dot').className = 'conn-dot' + (ok ? ' ok' : ' err');
+  document.getElementById('conn-label').textContent = ok ? 'Connected' : 'Disconnected';
+}
+
+// ── Waypoints ─────────────────────────────────────────────────────────────
+
+async function loadWaypoints() {
+  try {
+    waypoints = await fetch('/api/waypoints').then(r => r.json());
+  } catch (_) { waypoints = {}; }
+  renderList();
+}
+
+function renderList() {
+  const list = document.getElementById('table-list');
+  const tables = Object.entries(waypoints)
+    .filter(([, wp]) => wp.type === 'table' || !wp.type)
+    .sort(([, a], [, b]) => (a.number||99) - (b.number||99));
+
+  if (!tables.length) {
+    list.innerHTML = '<p class="empty">No tables defined. Add them in the Map Editor.</p>';
+    return;
+  }
+  list.innerHTML = '';
+  tables.forEach(([key, wp]) => {
+    const row = document.createElement('div');
+    row.className = 'tbl-row' + (selectedKey === key ? ' selected' : '');
+    row.innerHTML = `
+      <div class="tbl-num">${wp.number || '?'}</div>
+      <div class="tbl-meta">
+        <div class="tbl-name">${wp.label || key}</div>
+        <div class="tbl-dims">${wp.width || 0.8}m × ${wp.depth || 0.6}m</div>
+      </div>`;
+    row.addEventListener('click', () => {
+      if (delivering) return;
+      selectedKey = selectedKey === key ? null : key;
+      renderList();
+      document.getElementById('send-btn').disabled = !selectedKey;
+    });
+    list.appendChild(row);
+  });
+}
+
+// ── Nav goal ──────────────────────────────────────────────────────────────
+
+function sendGoal(wp) {
+  if (!goalPub) return;
+  goalPub.publish(new ROSLIB.Message({
+    header: { frame_id: 'map' },
+    pose: {
+      position: { x: wp.x, y: wp.y, z: 0 },
+      orientation: {
+        x: 0, y: 0,
+        z: Math.sin((wp.theta||0) / 2),
+        w: Math.cos((wp.theta||0) / 2),
+      },
+    },
+  }));
+}
+
+function subscribeNavStatus() {
+  const vel = new ROSLIB.Topic({ ros, name:'/cmd_vel', messageType:'geometry_msgs/Twist', throttle_rate:300 });
+  let lastMove = Date.now();
+  vel.subscribe(msg => {
+    if (!delivering) return;
+    const moving = Math.abs(msg.linear.x) > 0.01 || Math.abs(msg.angular.z) > 0.05;
+    if (moving) {
+      lastMove = Date.now();
+      setStatus('moving', 'Navigating…');
+    } else if (Date.now() - lastMove > 1500) {
+      setStatus('arrived', 'Arrived! 🎉');
+    }
+  });
+}
+
+// ── Buttons ───────────────────────────────────────────────────────────────
+
+document.getElementById('send-btn').addEventListener('click', () => {
+  if (!selectedKey || !waypoints[selectedKey]) return;
+  sendGoal(waypoints[selectedKey]);
+  delivering = true;
+  setStatus('moving', 'Navigating to ' + (waypoints[selectedKey].label || selectedKey) + '…');
+  document.getElementById('send-btn').style.display   = 'none';
+  document.getElementById('cancel-btn').style.display = '';
+  renderList();
+});
+
+document.getElementById('cancel-btn').addEventListener('click', () => {
+  delivering = false;
+  selectedKey = null;
+  if (cmdVel) cmdVel.publish(new ROSLIB.Message({ linear:{x:0,y:0,z:0}, angular:{x:0,y:0,z:0} }));
+  const origin = waypoints['origin'];
+  if (origin) sendGoal(origin);
+  setStatus('idle', 'Cancelled — returning to origin');
+  document.getElementById('send-btn').style.display   = '';
+  document.getElementById('cancel-btn').style.display = 'none';
+  document.getElementById('send-btn').disabled = true;
+  renderList();
+});
+
+function setStatus(state, text) {
+  document.getElementById('status-dot').className  = 'status-dot ' + state;
+  document.getElementById('status-text').textContent = text;
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+
+loadWaypoints();
+connect();
+</script>
+</body>
+</html>
