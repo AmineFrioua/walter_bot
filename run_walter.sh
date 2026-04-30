@@ -34,6 +34,9 @@ trap cleanup SIGINT SIGTERM
 echo "⚡ Powering LiDAR (GPIO 17)..."
 sudo pinctrl set 17 op dh
 
+echo "🌐 Freeing port 5000..."
+fuser -k 5000/tcp 2>/dev/null || true
+
 echo "🌐 Starting web UI on http://0.0.0.0:5000 ..."
 python3 "$SCRIPT_DIR/web_server.py" &
 WEB_PID=$!
