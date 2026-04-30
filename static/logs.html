@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Walter — Logs</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0f1117; color: #e2e8f0;
+  height: 100dvh; display: flex; flex-direction: column; overflow: hidden;
+}
+header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px; background: #0d0f18;
+  border-bottom: 1px solid #1a1d2e; flex-shrink: 0;
+}
+.back { text-decoration: none; color: #334155; font-size: .82rem; }
+.back:hover { color: #60a5fa; }
+.hdr-title { font-size: .88rem; font-weight: 700; flex: 1; }
+.conn { display: flex; align-items: center; gap: 5px; font-size: .68rem; font-family: monospace; color: #334155; }
+.conn-dot { width:7px; height:7px; border-radius:50%; background:#334155; }
+.conn-dot.ok { background:#22c55e; }
+.conn-dot.err { background:#ef4444; }
+.btn {
+  padding: 5px 12px; border-radius: 5px; border: 1px solid #1a1d2e;
+  background: #13151f; color: #475569; font-size: .72rem; font-weight: 600;
+  cursor: pointer; transition: background .1s;
+}
+.btn:hover { background: #1a1d2e; color: #e2e8f0; }
+
+/* Layout */
+.workspace { flex: 1; display: flex; min-height: 0; }
+
+/* Live gauges */
+#gauges {
+  width: 260px; background: #0d0f18; border-right: 1px solid #1a1d2e;
+  display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto;
+}
+.gauge-sect { padding: 10px; border-bottom: 1px solid #1a1d2e; }
+.gauge-title {
+  font-size: .58rem; text-transform: uppercase; letter-spacing: .1em;
+  color: #334155; font-weight: 700; margin-bottom: 8px;
+}
+.gauge-grid { display: flex; flex-direction: column; gap: 5px; }
+.gauge-row { display: flex; align-items: baseline; gap: 6px; }
+.gauge-lbl { font-size: .62rem; color: #475569; font-family: monospace; width: 64px; flex-shrink: 0; }
+.gauge-val { font-family: monospace; font-size: .9rem; font-weight: 500; color: #e2e8f0; flex: 1; }
+.gauge-val.warn { color: #f59e0b; }
+.gauge-val.ok   { color: #22c55e; }
+.gauge-unit { font-family: monospace; font-size: .56rem; color: #1e2537; }
+.gauge-bar-wrap { margin-top: 3px; height: 3px; background: #1a1d2e; border-radius: 2px; }
+.gauge-bar { height: 100%; border-radius: 2px; background: #3b82f6; transition: width .2s; }
+
+/* Scan histogram */
+#scan-hist-canvas { width: 100%; height: 60px; display: block; }
+
+/* Log panel */
+#log-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+#log-toolbar {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border-bottom: 1px solid #1a1d2e; flex-shrink: 0;
+}
+#log-toolbar .filter-btns { display: flex; gap: 4px; flex: 1; }
+.filter-btn {
+  padding: 4px 10px; border-radius: 5px; border: 1px solid #1a1d2e;
+  background: #13151f; color: #334155; font-size: .65rem; font-weight: 700;
+  cursor: pointer; text-transform: uppercase; letter-spacing: .06em;
+  transition: background .1s, color .1s, border-color .1s;
+}
+.filter-btn.active { background: #1c2d47; border-color: #3b82f6; color: #60a5fa; }
+#log-output {
+  flex: 1; overflow-y: auto; font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  font-size: .72rem; padding: 6px 0; min-height: 0;
+}
+.log-line {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 2px 12px; line-height: 1.6;
+  border-bottom: 1px solid rgba(26,29,46,.5);
+  transition: background .1s;
+}
+.log-line:hover { background: rgba(26,29,46,.5); }
+.log-ts   { color: #334155; font-size: .65rem; flex-shrink: 0; }
+.log-tag  { flex-shrink: 0; font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 1px 5px; border-radius: 3px; }
+.log-tag.scan  { background: rgba(59,130,246,.15); color: #60a5fa; }
+.log-tag.odom  { background: rgba(34,197,94,.12);  color: #4ade80; }
+.log-tag.cmd   { background: rgba(245,158,11,.12); color: #fbbf24; }
+.log-tag.imu   { background: rgba(168,85,247,.12); color: #c084fc; }
+.log-tag.sys   { background: rgba(100,116,139,.12);color: #94a3b8; }
+.log-msg { color: #94a3b8; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-msg.warn { color: #f59e0b; }
+.log-msg.error { color: #ef4444; }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="/">←</a>
+  <span class="hdr-title">Live Logs</span>
+  <div class="conn">
+    <div class="conn-dot" id="conn-dot"></div>
+    <span id="conn-label">Connecting</span>
+  </div>
+</header>
+
+<div class="workspace">
+
+  <!-- Gauges sidebar -->
+  <div id="gauges">
+
+    <div class="gauge-sect">
+      <div class="gauge-title">Position (odom)</div>
+      <div class="gauge-grid">
+        <div class="gauge-row"><span class="gauge-lbl">X</span><span class="gauge-val" id="g-x">—</span><span class="gauge-unit">m</span></div>
+        <div class="gauge-row"><span class="gauge-lbl">Y</span><span class="gauge-val" id="g-y">—</span><span class="gauge-unit">m</span></div>
+        <div class="gauge-row"><span class="gauge-lbl">Heading</span><span class="gauge-val" id="g-th">—</span><span class="gauge-unit">°</span></div>
+      </div>
+    </div>
+
+    <div class="gauge-sect">
+      <div class="gauge-title">Velocity (cmd_vel)</div>
+      <div class="gauge-grid">
+        <div class="gauge-row"><span class="gauge-lbl">Linear</span><span class="gauge-val" id="g-vx">0.00</span><span class="gauge-unit">m/s</span></div>
+        <div class="gauge-bar-wrap"><div class="gauge-bar" id="gb-vx" style="width:0%"></div></div>
+        <div class="gauge-row"><span class="gauge-lbl">Angular</span><span class="gauge-val" id="g-wz">0.00</span><span class="gauge-unit">r/s</span></div>
+        <div class="gauge-bar-wrap"><div class="gauge-bar" id="gb-wz" style="width:0%;background:#a78bfa"></div></div>
+      </div>
+    </div>
+
+    <div class="gauge-sect">
+      <div class="gauge-title">IMU (gyro Y)</div>
+      <div class="gauge-grid">
+        <div class="gauge-row"><span class="gauge-lbl">Angular Z</span><span class="gauge-val" id="g-gyro">—</span><span class="gauge-unit">r/s</span></div>
+      </div>
+    </div>
+
+    <div class="gauge-sect">
+      <div class="gauge-title">LiDAR (/scan_filtered)</div>
+      <div class="gauge-grid">
+        <div class="gauge-row"><span class="gauge-lbl">Front</span><span class="gauge-val" id="g-front">—</span><span class="gauge-unit">m</span></div>
+        <div class="gauge-row"><span class="gauge-lbl">Min range</span><span class="gauge-val" id="g-min">—</span><span class="gauge-unit">m</span></div>
+        <div class="gauge-row"><span class="gauge-lbl">Points</span><span class="gauge-val" id="g-pts">—</span></div>
+      </div>
+      <canvas id="scan-hist-canvas"></canvas>
+    </div>
+
+  </div>
+
+  <!-- Log output -->
+  <div id="log-panel">
+    <div id="log-toolbar">
+      <div class="filter-btns">
+        <button class="filter-btn active" data-tag="all"  onclick="setFilter(this)">All</button>
+        <button class="filter-btn" data-tag="scan" onclick="setFilter(this)">Scan</button>
+        <button class="filter-btn" data-tag="odom" onclick="setFilter(this)">Odom</button>
+        <button class="filter-btn" data-tag="cmd"  onclick="setFilter(this)">Cmd</button>
+        <button class="filter-btn" data-tag="imu"  onclick="setFilter(this)">IMU</button>
+        <button class="filter-btn" data-tag="sys"  onclick="setFilter(this)">System</button>
+      </div>
+      <button class="btn" onclick="clearLog()">Clear</button>
+    </div>
+    <div id="log-output"></div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+<script>
+const ROSBRIDGE = `ws://${location.hostname}:9090`;
+const FRONT_ARC = 0.26;
+const MAX_LINES = 300;
+let activeFilter = 'all';
+let ros;
+
+// ── Logging ───────────────────────────────────────────────────────────────
+function ts() {
+  const d = new Date();
+  return d.toTimeString().slice(0,8) + '.' + String(d.getMilliseconds()).padStart(3,'0');
+}
+function addLog(tag, msg, cls='') {
+  if (activeFilter !== 'all' && activeFilter !== tag) return;
+  const out = document.getElementById('log-output');
+  const atBottom = out.scrollTop + out.clientHeight >= out.scrollHeight - 10;
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.dataset.tag = tag;
+  line.innerHTML = `
+    <span class="log-ts">${ts()}</span>
+    <span class="log-tag ${tag}">${tag.toUpperCase()}</span>
+    <span class="log-msg ${cls}">${msg}</span>`;
+  out.appendChild(line);
+  // Trim old lines
+  while (out.children.length > MAX_LINES) out.removeChild(out.firstChild);
+  if (atBottom) out.scrollTop = out.scrollHeight;
+}
+function clearLog() { document.getElementById('log-output').innerHTML = ''; }
+function setFilter(btn) {
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  activeFilter = btn.dataset.tag;
+  // Re-show all lines matching filter
+  const out = document.getElementById('log-output');
+  out.querySelectorAll('.log-line').forEach(l => {
+    l.style.display = (activeFilter === 'all' || l.dataset.tag === activeFilter) ? '' : 'none';
+  });
+}
+
+// ── Scan histogram ────────────────────────────────────────────────────────
+const histCanvas = document.getElementById('scan-hist-canvas');
+function drawHistogram(ranges, rangeMax) {
+  const W = histCanvas.width = histCanvas.clientWidth * window.devicePixelRatio || 240;
+  const H = histCanvas.height = 60 * window.devicePixelRatio || 60;
+  const ctx = histCanvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  if (!ranges.length) return;
+  const bins = 60;
+  const binData = new Array(bins).fill(0);
+  const binW = rangeMax / bins;
+  ranges.forEach(r => {
+    if (!isFinite(r) || r < 0.05 || r > rangeMax) return;
+    const b = Math.min(bins-1, Math.floor(r / binW));
+    binData[b]++;
+  });
+  const maxCount = Math.max(...binData, 1);
+  const bw = W / bins;
+  binData.forEach((count, i) => {
+    const h = (count / maxCount) * (H - 4);
+    const r = i / bins; // 0=close, 1=far
+    // colour: close=red, mid=orange, far=blue
+    const hue = Math.round(r * 200 + 10); // 10(red)→210(blue)
+    ctx.fillStyle = `hsl(${hue},70%,55%)`;
+    ctx.fillRect(Math.round(i*bw), H-h, Math.max(1, Math.round(bw)-1), h);
+  });
+}
+
+// ── ROS ───────────────────────────────────────────────────────────────────
+function connect() {
+  ros = new ROSLIB.Ros({ url: ROSBRIDGE });
+  ros.on('connection', () => {
+    setConn(true);
+    addLog('sys', 'Connected to rosbridge at ' + ROSBRIDGE);
+    subscribeAll();
+  });
+  ros.on('error', () => {
+    setConn(false);
+    addLog('sys', 'Connection error', 'error');
+  });
+  ros.on('close', () => {
+    setConn(false);
+    addLog('sys', 'Disconnected — retrying in 3s', 'warn');
+    setTimeout(connect, 3000);
+  });
+}
+function setConn(ok) {
+  document.getElementById('conn-dot').className = 'conn-dot' + (ok ? ' ok' : ' err');
+  document.getElementById('conn-label').textContent = ok ? 'Connected' : 'Disconnected';
+}
+
+function subscribeAll() {
+  // Odom — log every 2s
+  let lastOdomLog = 0;
+  new ROSLIB.Topic({ ros, name:'/odom', messageType:'nav_msgs/Odometry', throttle_rate:200 }).subscribe(msg => {
+    const p = msg.pose.pose.position;
+    const q = msg.pose.pose.orientation;
+    const th = (2*Math.atan2(q.z, q.w) * 180/Math.PI).toFixed(1);
+    document.getElementById('g-x').textContent  = p.x.toFixed(3);
+    document.getElementById('g-y').textContent  = p.y.toFixed(3);
+    document.getElementById('g-th').textContent = th;
+    const now = Date.now();
+    if (now - lastOdomLog > 2000) {
+      lastOdomLog = now;
+      addLog('odom', `x=${p.x.toFixed(3)} y=${p.y.toFixed(3)} θ=${th}°`);
+    }
+  });
+
+  // cmd_vel — log every non-zero command
+  let lastCmdLog = 0;
+  new ROSLIB.Topic({ ros, name:'/cmd_vel', messageType:'geometry_msgs/Twist', throttle_rate:100 }).subscribe(msg => {
+    const vx = msg.linear.x, wz = msg.angular.z;
+    document.getElementById('g-vx').textContent = vx.toFixed(3);
+    document.getElementById('g-wz').textContent = wz.toFixed(3);
+    document.getElementById('gb-vx').style.width = Math.abs(vx)/0.2*100 + '%';
+    document.getElementById('gb-wz').style.width = Math.abs(wz)/1.5*100 + '%';
+    const el = document.getElementById('g-vx');
+    el.className = 'gauge-val' + (Math.abs(vx)>0.01 ? ' warn' : '');
+    const now = Date.now();
+    if ((Math.abs(vx)>0.01 || Math.abs(wz)>0.05) && now-lastCmdLog>500) {
+      lastCmdLog = now;
+      addLog('cmd', `linear.x=${vx.toFixed(3)} angular.z=${wz.toFixed(3)}`);
+    }
+  });
+
+  // IMU
+  let lastImuLog = 0;
+  new ROSLIB.Topic({ ros, name:'/imu/data_raw', messageType:'sensor_msgs/Imu', throttle_rate:200 }).subscribe(msg => {
+    const ay = msg.angular_velocity.y;
+    document.getElementById('g-gyro').textContent = ay.toFixed(4);
+    const now = Date.now();
+    if (Math.abs(ay) > 0.05 && now - lastImuLog > 1000) {
+      lastImuLog = now;
+      addLog('imu', `gyro.y=${ay.toFixed(4)} r/s`);
+    }
+  });
+
+  // Scan
+  let lastScanLog = 0;
+  new ROSLIB.Topic({ ros, name:'/scan_filtered', messageType:'sensor_msgs/LaserScan', throttle_rate:500 }).subscribe(msg => {
+    const ranges = msg.ranges;
+    let minR=Infinity, frontMin=Infinity, valid=0;
+    for (let i=0; i<ranges.length; i++) {
+      const r=ranges[i];
+      if (!isFinite(r)||r<0.05||r>msg.range_max) continue;
+      valid++;
+      if (r<minR) minR=r;
+      const a = msg.angle_min + i*msg.angle_increment;
+      if (Math.abs(a)<FRONT_ARC && r<frontMin) frontMin=r;
+    }
+    document.getElementById('g-pts').textContent   = valid;
+    document.getElementById('g-min').textContent   = minR<Infinity   ? minR.toFixed(3)   : '—';
+    document.getElementById('g-front').textContent = frontMin<Infinity ? frontMin.toFixed(3) : '—';
+    const fEl = document.getElementById('g-front');
+    fEl.className = 'gauge-val' + (frontMin<0.5 ? ' warn' : frontMin<0.3 ? ' error' : '');
+    drawHistogram(Array.from(ranges), msg.range_max || 12);
+    const now = Date.now();
+    if (now - lastScanLog > 2000) {
+      lastScanLog = now;
+      const front = frontMin<Infinity ? frontMin.toFixed(3)+'m' : '—';
+      const warn  = frontMin < 0.4 ? ' ⚠️ CLOSE!' : '';
+      addLog('scan', `pts=${valid}  min=${minR<Infinity?minR.toFixed(3)+'m':'—'}  front=${front}${warn}`, frontMin<0.4?'warn':'');
+    }
+  });
+}
+
+connect();
+</script>
+</body>
+</html>
