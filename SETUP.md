@@ -1,17 +1,25 @@
 # Walter — Setup Guide
 
-Covers everything from first boot to a working delivery system. Assumes the Docker image is already built (`docker build -t walter_dev .`).
+Covers everything from first boot to a working delivery system.
 
 ---
 
 ## Prerequisites
 
-**Docker image** — everything is handled by the `Dockerfile` (ROS 2, Nav2, SLAM, Flask, smbus2, spidev…). Just build once:
+### Docker image
+
+Everything ROS-related runs in Docker. Build the image once:
+
 ```bash
 docker build -t walter_dev .
 ```
 
-**Pi host** — `web_server.py` runs outside Docker so it can access GPIO/SPI/I2C directly. Flask needs to be installed on the host separately:
+This installs ROS 2 Humble, Nav2, SLAM Toolbox, rosbridge, and all Python dependencies.
+
+### Pi host dependencies
+
+`web_server.py` runs outside Docker (so it can access GPIO/SPI/I2C). Install Flask on the Pi host:
+
 ```bash
 pip3 install flask
 ```
@@ -24,146 +32,165 @@ pip3 install flask
 ./run_walter.sh
 ```
 
-This powers the LiDAR via GPIO 17, waits 3 s for spin-up, then starts the Docker container with the full ROS 2 stack (LiDAR → SLAM → rosbridge → Nav2). One command, nothing else needed.
+What this does, in order:
+1. Powers the LiDAR via GPIO 17 (`sudo pinctrl set 17 op dh`)
+2. Starts `web_server.py` on port 5000 in the background
+3. Waits 3 seconds for the LiDAR to spin up
+4. Removes any stale Docker container named `walter_dev`
+5. Starts Docker with the ROS 2 stack in the detected mode
 
----
+**Mode auto-detection:**
 
-## Step 2 — Start the web server
-
-Run this on the Pi host (not inside Docker):
-
-```bash
-cd ~/walter_bot
-python3 web_server.py
-```
-
-Output:
-```
-Walter web server starting on http://0.0.0.0:5000
-   Delivery  : http://localhost:5000/
-   Admin     : http://localhost:5000/admin
-   Drive     : http://localhost:5000/static/drive.html
-   Face      : http://localhost:5000/static/face.html
-```
-
-Keep this running. To auto-start on boot see Step 7.
-
----
-
-## Step 3 — Map the room
-
-Walter needs a map before he can deliver. Two approaches:
-
-### Option A — Autonomous (roomba mapper)
-
-```bash
-docker exec -it walter_dev bash
-source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash
-python3 /ros2_ws/roomba_mapper.py
-```
-
-Walter explores by himself. Stops when the map stabilises or you press `Ctrl+C`.
-
-### Option B — Manual drive + scan (recommended if Option A struggles)
-
-1. Open the Admin UI: `http://<pi-ip>:5000/admin`
-2. Click **Scan** in the header — scan overlay activates (button turns blue)
-3. Optionally click **Fwd only** — restricts LiDAR to the forward 180° arc for cleaner mapping while driving forward
-4. Open Drive in another tab: `http://<pi-ip>:5000/static/drive.html`
-5. Drive Walter around the room with the keyboard — blue scan dots accumulate on the Admin map, building up the room geometry
-6. When walls and obstacles are fully visible on the map, stop driving
-7. Click **Clear** in Admin to wipe the dot overlay (the underlying SLAM map is unaffected)
-8. Click **Fwd only** again to restore full 360° scan for delivery
-
-Both options build the same SLAM map — the manual route just gives you direct control.
-
-### Save the map
-
-Once the room is covered:
-```bash
-docker exec -it walter_dev bash /ros2_ws/save_map.sh
-```
-
-Creates `maps/room_map.pgm` and `maps/room_map.yaml` in the repo directory.
-
----
-
-## Step 4 — Admin UI — place table markers
-
-Open: `http://<pi-ip>:5000/admin`
-
-**Adding tables:**
-1. Click anywhere on the map
-2. Type a name (e.g. `Table 3`)
-3. Click **Save** — an orange dot appears and saves to `waypoints.json`
-
-Repeat for all tables (7–12 recommended). Changes persist after reboot.
-
-**To remove a table:** click its dot on the map, or click ✕ in the sidebar list.
-
-### Admin header buttons
-
-| Button | What it does |
+| Condition | Mode started |
 |---|---|
-| **Full scan / Fwd only** | Toggle LiDAR arc between 360° (full) and 180° (forward only). Takes effect immediately — no restart. Use Fwd only while mapping manually, Full scan for delivery. |
-| **Scan** | Show/hide live scan dot overlay on the map. Dots accumulate as Walter moves, showing what the LiDAR has seen. |
-| **Clear** | Wipe the accumulated scan dot overlay (SLAM map underneath is untouched). |
-| **Drive** | Open the keyboard teleoperation page. |
+| `maps/room_map.yaml` exists | Navigate (AMCL + Nav2) |
+| No map file found | Mapping (SLAM only) |
+
+Override explicitly:
+
+```bash
+./run_walter.sh mapping             # force map-building mode
+./run_walter.sh navigate            # force production mode
+./run_walter.sh navigate my_map     # navigate with maps/my_map.yaml
+```
 
 ---
 
-## Step 5 — Keyboard drive
+## Step 2 — Open the UI
 
-Open: `http://<pi-ip>:5000/static/drive.html`
+From a browser on the same network:
 
-Also reachable via the **Drive** button in the Admin header.
+```
+http://<pi-ip>:5000/
+```
 
-**Key bindings:**
+The launcher page has cards for all tools. All pages are mobile-friendly — use a phone or tablet if needed.
+
+---
+
+## Step 3 — Build a map (first time only)
+
+On first boot there is no map, so Walter starts in **mapping mode** (SLAM Toolbox, no Nav2).
+
+1. Open `http://<pi-ip>:5000/static/map.html`
+2. The map canvas starts blank; the LiDAR is already scanning
+3. Open **Drive** tab (or `http://<pi-ip>:5000/static/drive.html` on another tab) and drive Walter around the room
+4. Watch the map build live:
+   - Blue edges = detected obstacle boundaries
+   - Coloured dots = current LiDAR scan
+   - Orange dot = closest point in the forward ±15° arc
+5. Cover all walls and obstacle perimeters
+6. Click **Save Map** in the Drive tab when done
+
+The map is also **auto-saved every 2 minutes** and on Ctrl+C.
+
+Saved files:
+```
+maps/room_map.pgm    ← bitmap
+maps/room_map.yaml   ← metadata (resolution, origin)
+```
+
+7. Stop Walter (`Ctrl+C` in the terminal) and restart:
+
+```bash
+./run_walter.sh
+```
+
+This time `maps/room_map.yaml` exists → Walter auto-starts in **navigate mode**.
+
+---
+
+## Step 4 — Place tables and zones
+
+With Walter running in navigate mode:
+
+1. Open `http://<pi-ip>:5000/static/editor.html`
+2. The saved map loads from the `/map` topic (published by `map_server`)
+3. **Place a waypoint:**
+   - Select type from the toolbar: **Table**, **Zone**, or **Origin**
+   - Click anywhere on the map to place it
+   - Fill in the label and (for tables) width × depth
+   - Click **Save**
+4. **Move a waypoint:** drag the marker to a new position
+5. **Edit / delete:** click the marker to open the inline form
+
+Waypoints are stored in `waypoints.json` in the repo root and persist across reboots.
+
+**Waypoint schema:**
+```json
+{
+  "Table 1": {
+    "x": 1.2, "y": -0.5, "theta": 0.0,
+    "label": "Table 1",
+    "type": "table",
+    "number": 1,
+    "width": 0.8,
+    "depth": 0.6
+  }
+}
+```
+
+---
+
+## Step 5 — Delivery
+
+1. Open `http://<pi-ip>:5000/static/delivery.html`
+2. Tap a table name in the list
+3. Tap **Send Walter** — a Nav2 goal is published to `/goal_pose`
+4. Walter navigates autonomously to the table and waits (10 s by default), then returns to origin
+5. Tap **Cancel** at any time to abort
+
+Walter's live position is shown on the map using `/amcl_pose`.
+
+---
+
+## Step 6 — Manual drive
+
+Open `http://<pi-ip>:5000/static/drive.html`
+
+**Keyboard bindings:**
 
 | Key | Action |
 |---|---|
-| W / A / S / D or Arrow keys | Forward / Left / Backward / Right |
+| W / ↑ | Forward |
+| S / ↓ | Backward |
+| A / ← | Turn left |
+| D / → | Turn right |
 | Q / Z | Both speeds ×1.1 / ×0.9 |
-| = / - | Linear speed only up / down |
-| E / C | Angular speed only up / down |
-| Space or K | Emergency stop |
+| = / - | Linear speed up / down |
+| E / C | Angular speed up / down |
+| Space / K | Emergency stop |
 
-Speed starts at 0.05 m/s linear, 0.50 r/s angular. Values are shown live and persist between key presses. The page sends a stop command automatically if the browser window loses focus.
+Speed starts at 0.05 m/s linear, 0.50 rad/s angular. Values are shown live and persist between key presses. A stop command is sent automatically when the window loses focus.
 
----
-
-## Step 6 — Delivery UI
-
-Open on the touchscreen: `http://localhost:5000/`  
-Or from a phone on the same network: `http://<pi-ip>:5000/`
-
-1. Tap a table button in the right panel
-2. Tap **Send Walter**
-3. Walter navigates to the table, waits 10 seconds, returns to `[0, 0]`
-4. Tap **Cancel** at any time to stop immediately
-
-The blue dot on the map shows Walter's live position. The selected table turns green while delivering.
+The page also has an on-screen **d-pad** for touchscreen / mobile use.
 
 ---
 
-## Step 7 — Robot face screen
+## Step 7 — Sensor logs
+
+Open `http://<pi-ip>:5000/static/logs.html`
+
+Live gauges show:
+- `/scan` — point count, min / max / mean range
+- `/odom` — linear and angular velocity
+- `/imu/data_raw` — acceleration X / Y / Z
+- `/cmd_vel` — commanded velocity
+
+Useful for verifying hardware is publishing correctly before a delivery run.
+
+---
+
+## Step 8 — Robot face screen
 
 Open fullscreen on the robot's attached screen:
+
 ```
 http://localhost:5000/static/face.html
 ```
 
-The eyes react automatically to `/cmd_vel`:
+The eyes react automatically to `/cmd_vel`. Trigger named states from any node or shell:
 
-| State | Colour | Trigger |
-|---|---|---|
-| Idle | Blue | No movement |
-| Moving | Orange | Linear velocity |
-| Turning | Purple | Angular velocity |
-| Arrived | Green (pulsing) | `/walter/face` topic |
-| Error | Red | `/walter/face` topic |
-
-To trigger a state from any Python node or the shell:
 ```bash
 docker exec -it walter_dev bash -c "
   source /opt/ros/humble/setup.bash &&
@@ -175,67 +202,78 @@ Valid states: `idle`, `moving`, `turning`, `arrived`, `waiting`, `returning`, `e
 
 ---
 
-## Step 8 — Auto-start web server on boot (optional)
+## Step 9 — Auto-start on boot (optional)
 
-Create `/etc/systemd/system/walter-web.service`:
+### `run_walter.sh` on boot
+
+Create `/etc/systemd/system/walter.service`:
 
 ```ini
 [Unit]
-Description=Walter Web Server
+Description=Walter Robot
 After=network.target
 
 [Service]
 User=pi
 WorkingDirectory=/home/pi/walter_bot
-ExecStart=/usr/bin/python3 /home/pi/walter_bot/web_server.py
-Restart=always
+ExecStart=/home/pi/walter_bot/run_walter.sh
+Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl enable walter-web
-sudo systemctl start walter-web
+sudo systemctl enable walter
+sudo systemctl start walter
+```
+
+> **Note:** `web_server.py` is already started by `run_walter.sh` — you do not need a separate service for it.
+
+---
+
+## Map management
+
+### Save a map manually
+
+```bash
+# From the UI — click Save Map in map.html (mapping mode only)
+
+# Or from the terminal:
+docker exec -it walter_dev bash /ros2_ws/save_map.sh
+docker exec -it walter_dev bash /ros2_ws/save_map.sh my_custom_name
+```
+
+### Use a different saved map
+
+```bash
+./run_walter.sh navigate my_custom_name
+# Loads maps/my_custom_name.yaml
+```
+
+### Start over with a fresh map
+
+```bash
+./run_walter.sh mapping
+# Or delete the map file so auto-detect picks mapping mode:
+rm maps/room_map.yaml maps/room_map.pgm
+./run_walter.sh
 ```
 
 ---
 
-## Connecting hardware (SPI / I2C / GPIO)
+## Flask API reference
 
-`web_server.py` runs on the Pi host so it has direct hardware access:
+`web_server.py` exposes these endpoints (all on port 5000):
 
-```python
-import smbus2   # I2C — battery gauge
-import spidev   # SPI — load cell ADC
-import RPi.GPIO # GPIO — LEDs, relays
-```
-
-**Load cell pattern** (background thread + API endpoint):
-
-```python
-import threading, spidev, time
-
-spi = spidev.SpiDev()
-spi.open(0, 0)
-spi.max_speed_hz = 1_000_000
-load_cell_kg = 0.0
-
-def poll_load_cell():
-    global load_cell_kg
-    while True:
-        raw = spi.xfer2([0x00, 0x00])
-        load_cell_kg = (raw[0] << 8 | raw[1]) * 0.001
-        time.sleep(0.05)
-
-threading.Thread(target=poll_load_cell, daemon=True).start()
-
-@app.route('/api/weight')
-def get_weight():
-    return jsonify({'kg': load_cell_kg})
-```
-
-The delivery UI can poll `/api/weight` and trigger return-home when the value drops (item collected).
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/waypoints` | Return all waypoints as JSON |
+| PUT | `/api/waypoints/<name>` | Create or update a waypoint |
+| DELETE | `/api/waypoints/<name>` | Delete a waypoint |
+| POST | `/api/save_map` | Trigger `save_map.sh` inside Docker. Body: `{"name": "room_map"}` |
+| GET | `/api/config` | Return server config (`delivery_wait_s`) |
 
 ---
 
@@ -243,11 +281,25 @@ The delivery UI can poll `/api/weight` and trigger return-home when the value dr
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Map not showing in UI | rosbridge not running | Check `start_brain.sh` Stage 2 started rosbridge on port 9090 |
-| Tables disappear after reboot | Wrong working directory | Run `web_server.py` from the `walter_bot/` directory |
-| Robot ignores navigation goals | `use_sim_time: True` in nav2_params | Must be `False` everywhere — it silently waits for `/clock` |
+| Map not showing in browser | rosbridge not connected | Check the ROS dot in the header — should be green. Verify port 9090 is open. |
+| Map shows but is empty | Wrong mode | `editor.html` works in both modes; `map.html` needs mapping mode and SLAM running |
+| Walter ignores nav goals | Nav2 not running | Only available in navigate mode. Check `maps/room_map.yaml` exists. |
+| `flask` not found | Flask not on host | `pip3 install flask` on Pi host (not inside Docker) |
+| Port 5000 already in use | Stale web server process | `pkill -f web_server.py` then restart |
 | Face screen blank | rosbridge unreachable | Docker must run with `--network host` |
-| `flask` not found | Installed in Docker, not host | `pip3 install flask` on the Pi host, not inside Docker |
-| SLAM `Failed to compute odom pose` | Wrong `base_frame` | Must be `base_link` in `slam_params.yaml`, not `base_footprint` |
-| `Fwd only` button shows `?` | Parameter service call failed | Ensure `lidar_filter.py` is running inside Docker |
-| Scan dots misaligned from walls | Odom drift | Expected — `/odom` accumulates error over time. Clear and rescan after repositioning. |
+| SLAM `Failed to compute odom pose` | Wrong `base_frame` | Must be `base_link` in `slam_params.yaml` |
+| Walter stuck or oscillating | DWB inflation radius | Increase `inflation_radius` in `config/nav2_params.yaml` |
+| `use_sim_time` error | Nav2 waiting for `/clock` | Set `use_sim_time: False` in all nav2_params.yaml nodes |
+| Scan dots misaligned from walls | Odometry drift | Expected on long runs — re-save the map after repositioning |
+| Docker container already exists | Stale container from crash | `docker rm -f walter_dev` — `run_walter.sh` does this automatically |
+
+---
+
+## Hardware wiring reference
+
+| Component | Interface | Address / Port | Notes |
+|---|---|---|---|
+| RPLidar A1M8 | UART | `/dev/ttyAMA0` @ 115200 | Disable serial login in `raspi-config`, keep hardware UART on |
+| Motor controller | I2C | `0x55` | Requires I2C enabled in `raspi-config` |
+| LSM6DS IMU | I2C | `0x6A` | Same I2C bus as motor controller |
+| LiDAR power | GPIO | Pin 17 | Controlled by `run_walter.sh` via `pinctrl` |
