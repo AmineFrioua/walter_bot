@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Walter — Map</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0f1117; color: #e2e8f0;
+  height: 100dvh; display: flex; flex-direction: column; overflow: hidden;
+  user-select: none;
+}
+
+/* Header */
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; background: #0d0f18;
+  border-bottom: 1px solid #1a1d2e; flex-shrink: 0; gap: 12px;
+}
+.back { text-decoration: none; color: #334155; font-size: .85rem; }
+.back:hover { color: #60a5fa; }
+.hdr-title { font-size: .9rem; font-weight: 700; }
+.conn {
+  display: flex; align-items: center; gap: 6px;
+  font-size: .72rem; font-family: monospace; color: #475569;
+}
+.conn-dot { width:7px; height:7px; border-radius:50%; background:#334155; flex-shrink:0; }
+.conn-dot.ok  { background:#22c55e; }
+.conn-dot.err { background:#ef4444; }
+
+/* Main layout */
+.workspace { flex:1; display:flex; min-height:0; }
+
+/* Map area */
+#map-area {
+  flex:1; position:relative; background:#090b12; overflow:hidden; min-width:0;
+}
+#map-canvas, #scan-canvas {
+  position:absolute; inset:0; width:100%; height:100%; image-rendering:pixelated;
+}
+#scan-canvas { pointer-events:none; }
+#robot-dot {
+  position:absolute; width:14px; height:14px; border-radius:50%;
+  background:#3b82f6; border:3px solid #fff;
+  transform:translate(-50%,-50%); pointer-events:none;
+  display:none; z-index:10; box-shadow:0 0 6px rgba(59,130,246,.6);
+}
+#map-status {
+  position:absolute; inset:0;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:8px; color:#1e2537; font-size:.75rem; font-family:monospace;
+  pointer-events:none;
+}
+#map-status.hidden { display:none; }
+#map-info {
+  position:absolute; bottom:8px; left:10px;
+  font-family:monospace; font-size:.6rem; color:#1e2537;
+  pointer-events:none; z-index:5;
+}
+
+/* Right panel */
+#panel {
+  width:240px; background:#0d0f18; border-left:1px solid #1a1d2e;
+  display:flex; flex-direction:column; gap:0; flex-shrink:0; overflow-y:auto;
+}
+.sect { padding:10px; border-bottom:1px solid #1a1d2e; display:flex; flex-direction:column; gap:8px; }
+.sect-label {
+  font-size:.58rem; text-transform:uppercase; letter-spacing:.1em;
+  color:#1e2537; font-weight:700;
+}
+
+/* Scan buttons */
+.btn-row { display:flex; gap:6px; }
+.btn {
+  padding:7px 10px; border-radius:6px; border:1px solid #1a1d2e;
+  background:#13151f; color:#475569; font-size:.75rem; font-weight:600;
+  cursor:pointer; transition:background .12s, color .12s, border-color .12s;
+  flex:1; text-align:center;
+}
+.btn:hover { background:#1a1d2e; color:#e2e8f0; }
+.btn.active { background:#1c2d47; border-color:#3b82f6; color:#60a5fa; }
+
+/* D-pad */
+.dpad {
+  display:grid; grid-template-columns:repeat(3,52px);
+  grid-template-rows:repeat(3,52px); gap:4px; align-self:center;
+}
+.dk {
+  background:#0d0f18; border:1px solid #1a1d2e; border-bottom:3px solid #07080f;
+  border-radius:8px; color:#1e2537; font-size:1.1rem; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  touch-action:none; transition:background .07s, color .07s, border-color .07s, transform .07s;
+}
+.dk.pressed { background:#1c2d47; border-color:#2563eb; border-bottom-color:#1d4ed8; color:#93c5fd; transform:translateY(2px); }
+.dk.stop { border-color:#2d0f0f; background:#0b0505; color:#3f1515; font-size:.55rem; font-weight:700; letter-spacing:.04em; }
+.dk.stop.pressed { background:#3a0f0f; border-color:#ef4444; color:#fca5a5; }
+
+/* Speed */
+.spd-row { display:flex; align-items:center; gap:6px; }
+.spd-lbl { font-size:.6rem; text-transform:uppercase; letter-spacing:.08em; color:#334155; font-family:monospace; width:44px; flex-shrink:0; }
+.spd-val { font-family:monospace; font-size:.95rem; font-weight:500; flex:1; }
+.spd-unit { font-family:monospace; font-size:.58rem; color:#1e2537; }
+.spd-btns { display:flex; gap:3px; }
+.spd-adj {
+  width:22px; height:22px; border-radius:4px; border:1px solid #1a1d2e;
+  background:#0d0f18; color:#334155; font-size:.8rem;
+  cursor:pointer; display:flex; align-items:center; justify-content:center;
+}
+.spd-adj:hover { background:#1c2d47; color:#93c5fd; border-color:#2563eb; }
+.spd-hint { font-family:monospace; font-size:.57rem; color:#1a1d2e; text-align:center; }
+
+/* E-stop */
+.estop {
+  width:100%; padding:10px; border-radius:6px;
+  border:1px solid #3f1515; background:#0b0505; color:#ef4444;
+  font-size:.68rem; font-weight:700; cursor:pointer;
+  letter-spacing:.14em; text-transform:uppercase; font-family:monospace;
+}
+.estop:hover { background:#2d0f0f; }
+.estop.fired { background:#450a0a; border-color:#ef4444; }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="/">← Back</a>
+  <span class="hdr-title">Map Building</span>
+  <div class="conn">
+    <div class="conn-dot" id="conn-dot"></div>
+    <span id="conn-label">Connecting</span>
+  </div>
+</header>
+
+<div class="workspace">
+
+  <!-- Map canvas -->
+  <div id="map-area">
+    <canvas id="map-canvas"></canvas>
+    <canvas id="scan-canvas"></canvas>
+    <div id="robot-dot"></div>
+    <div id="map-status">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".3">
+        <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
+      </svg>
+      <span id="map-status-text">Waiting for map…</span>
+    </div>
+    <div id="map-info"></div>
+  </div>
+
+  <!-- Right panel -->
+  <div id="panel">
+
+    <div class="sect">
+      <span class="sect-label">LiDAR Scan</span>
+      <div class="btn-row">
+        <button class="btn" id="scan-btn">Scan OFF</button>
+        <button class="btn" id="clear-btn">Clear</button>
+      </div>
+      <p style="font-size:.65rem;color:#1e2537;line-height:1.6">
+        Drive around the room. Toggle Scan to paint LiDAR points onto the map.
+      </p>
+    </div>
+
+    <div class="sect">
+      <span class="sect-label">Drive</span>
+      <div class="dpad">
+        <div></div>
+        <button class="dk" id="dk-fwd">↑</button>
+        <div></div>
+        <button class="dk" id="dk-left">←</button>
+        <button class="dk stop" id="dk-stop">STOP</button>
+        <button class="dk" id="dk-right">→</button>
+        <div></div>
+        <button class="dk" id="dk-back">↓</button>
+        <div></div>
+      </div>
+    </div>
+
+    <div class="sect">
+      <span class="sect-label">Speed</span>
+      <div class="spd-row">
+        <span class="spd-lbl">Linear</span>
+        <span class="spd-val" id="lin-val">0.05</span>
+        <span class="spd-unit">m/s</span>
+        <div class="spd-btns">
+          <button class="spd-adj" id="lin-dec">−</button>
+          <button class="spd-adj" id="lin-inc">+</button>
+        </div>
+      </div>
+      <div class="spd-row">
+        <span class="spd-lbl">Angular</span>
+        <span class="spd-val" id="ang-val">0.50</span>
+        <span class="spd-unit">r/s</span>
+        <div class="spd-btns">
+          <button class="spd-adj" id="ang-dec">−</button>
+          <button class="spd-adj" id="ang-inc">+</button>
+        </div>
+      </div>
+      <div class="spd-hint">Q/Z both · =/- linear · E/C angular</div>
+    </div>
+
+    <div class="sect">
+      <button class="estop" id="estop-btn">Emergency Stop [space]</button>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+<script>
+const ROSBRIDGE = `ws://${location.hostname}:9090`;
+const LIN_MAX = 0.20, LIN_MIN = 0.01, ANG_MAX = 1.5, ANG_MIN = 0.05, STEP = 1.1;
+
+let linSpeed = 0.05, angSpeed = 0.50;
+let mapMeta = null, robotPose = { x:0, y:0, theta:0 };
+let scanActive = false, scanSub = null;
+let cmdVel = null, pubLoop = null;
+const held = { fwd:false, back:false, left:false, right:false };
+
+// ── ROS connection ────────────────────────────────────────────────────────
+
+let ros;
+function connect() {
+  ros = new ROSLIB.Ros({ url: ROSBRIDGE });
+  ros.on('connection', () => {
+    setConn(true);
+    cmdVel = new ROSLIB.Topic({ ros, name:'/cmd_vel', messageType:'geometry_msgs/Twist' });
+    if (!pubLoop) pubLoop = setInterval(publishDrive, 100);
+    subscribeMap();
+    subscribeOdom();
+    if (scanActive) startScan();
+    else startLiveScan();
+  });
+  ros.on('error', () => setConn(false));
+  ros.on('close', () => {
+    setConn(false);
+    clearInterval(pubLoop); pubLoop = null;
+    setTimeout(connect, 3000);
+  });
+}
+function setConn(ok) {
+  document.getElementById('conn-dot').className = 'conn-dot' + (ok ? ' ok' : ' err');
+  document.getElementById('conn-label').textContent = ok ? 'Connected' : 'Disconnected';
+}
+
+// ── Map ───────────────────────────────────────────────────────────────────
+
+function subscribeMap() {
+  const t = new ROSLIB.Topic({
+    ros, name:'/map', messageType:'nav_msgs/OccupancyGrid', throttle_rate: 2000,
+  });
+  t.subscribe(msg => {
+    mapMeta = msg.info;
+    drawMap(msg);
+    document.getElementById('map-status').classList.add('hidden');
+    document.getElementById('map-info').textContent =
+      `${msg.info.width}×${msg.info.height}  ${msg.info.resolution.toFixed(3)} m/px`;
+  });
+}
+
+function drawMap(msg) {
+  const canvas = document.getElementById('map-canvas');
+  const { width, height, data } = msg;
+  canvas.width  = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(width, height);
+  for (let i = 0; i < data.length; i++) {
+    const v = data[i];
+    let r, g, b;
+    if      (v === -1) { r=70;  g=70;  b=90;  }   // unknown  — dark blue-grey
+    else if (v ===  0) { r=210; g=210; b=210; }   // free     — light grey
+    else               { r=20;  g=20;  b=30;  }   // occupied — near black
+    // flip Y: ROS Y-up → canvas Y-down
+    const px = (height - 1 - Math.floor(i / width)) * width + (i % width);
+    img.data[px*4]   = r;
+    img.data[px*4+1] = g;
+    img.data[px*4+2] = b;
+    img.data[px*4+3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  syncScanCanvas();
+  updateRobot();
+}
+
+// ── Odometry ──────────────────────────────────────────────────────────────
+
+function subscribeOdom() {
+  const t = new ROSLIB.Topic({
+    ros, name:'/odom', messageType:'nav_msgs/Odometry', throttle_rate:100,
+  });
+  t.subscribe(msg => {
+    const p = msg.pose.pose.position;
+    const q = msg.pose.pose.orientation;
+    robotPose = { x: p.x, y: p.y, theta: 2 * Math.atan2(q.z, q.w) };
+    updateRobot();
+  });
+}
+
+function updateRobot() {
+  if (!mapMeta) return;
+  const pos = mapToScreen(robotPose.x, robotPose.y);
+  if (!pos) return;
+  const el = document.getElementById('robot-dot');
+  el.style.left = pos.left + 'px';
+  el.style.top  = pos.top  + 'px';
+  el.style.display = 'block';
+}
+
+// ── Coordinates ───────────────────────────────────────────────────────────
+
+function mapToScreen(mx, my) {
+  if (!mapMeta) return null;
+  const area = document.getElementById('map-area');
+  const scaleX = area.clientWidth  / mapMeta.width;
+  const scaleY = area.clientHeight / mapMeta.height;
+  const px = (mx - mapMeta.origin.position.x) / mapMeta.resolution;
+  const py = (my - mapMeta.origin.position.y) / mapMeta.resolution;
+  return { left: px * scaleX, top: (mapMeta.height - py) * scaleY };
+}
+
+// ── Scan canvas ───────────────────────────────────────────────────────────
+
+function syncScanCanvas() {
+  const scan = document.getElementById('scan-canvas');
+  if (mapMeta) {
+    const map = document.getElementById('map-canvas');
+    scan.width  = map.width;
+    scan.height = map.height;
+  } else {
+    const area = document.getElementById('map-area');
+    scan.width  = area.clientWidth;
+    scan.height = area.clientHeight;
+  }
+}
+
+function clearScan() {
+  const c = document.getElementById('scan-canvas');
+  c.getContext('2d').clearRect(0, 0, c.width, c.height);
+}
+
+// Live scan (non-accumulating, local radar when no map)
+function startLiveScan() {
+  if (scanSub) { scanSub.unsubscribe(); scanSub = null; }
+  scanSub = new ROSLIB.Topic({
+    ros, name:'/scan_filtered', messageType:'sensor_msgs/LaserScan', throttle_rate:120,
+  });
+  scanSub.subscribe(msg => {
+    syncScanCanvas();
+    const canvas = document.getElementById('scan-canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!mapMeta) { drawRadar(ctx, canvas, msg); return; }
+    ctx.fillStyle = 'rgba(96,165,250,.7)';
+    const { x:rx, y:ry, theta } = robotPose;
+    for (let i = 0; i < msg.ranges.length; i++) {
+      const r = msg.ranges[i];
+      if (!isFinite(r) || r < 0.05 || r > msg.range_max) continue;
+      const angle = msg.angle_min + i * msg.angle_increment + theta;
+      const wx = rx + r * Math.cos(angle);
+      const wy = ry + r * Math.sin(angle);
+      const px = (wx - mapMeta.origin.position.x) / mapMeta.resolution;
+      const py = mapMeta.height - (wy - mapMeta.origin.position.y) / mapMeta.resolution;
+      if (px < 0 || px >= canvas.width || py < 0 || py >= canvas.height) continue;
+      ctx.fillRect(Math.round(px), Math.round(py), 2, 2);
+    }
+  });
+}
+
+// Accumulate scan (paints permanently)
+function startScan() {
+  if (scanSub) { scanSub.unsubscribe(); scanSub = null; }
+  scanSub = new ROSLIB.Topic({
+    ros, name:'/scan_filtered', messageType:'sensor_msgs/LaserScan', throttle_rate:400,
+  });
+  scanSub.subscribe(msg => {
+    if (!mapMeta) return;
+    syncScanCanvas();
+    const canvas = document.getElementById('scan-canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#3b82f6';
+    const { x:rx, y:ry, theta } = robotPose;
+    for (let i = 0; i < msg.ranges.length; i++) {
+      const r = msg.ranges[i];
+      if (!isFinite(r) || r < 0.05 || r > msg.range_max) continue;
+      const angle = msg.angle_min + i * msg.angle_increment + theta;
+      const wx = rx + r * Math.cos(angle);
+      const wy = ry + r * Math.sin(angle);
+      const px = (wx - mapMeta.origin.position.x) / mapMeta.resolution;
+      const py = mapMeta.height - (wy - mapMeta.origin.position.y) / mapMeta.resolution;
+      if (px < 0 || px >= canvas.width || py < 0 || py >= canvas.height) continue;
+      ctx.fillRect(Math.round(px), Math.round(py), 2, 2);
+    }
+  });
+}
+
+function drawRadar(ctx, canvas, msg) {
+  const cx = canvas.width / 2, cy = canvas.height / 2;
+  const maxR = Math.min(msg.range_max || 6, 6);
+  const scale = Math.min(cx, cy) * 0.85 / maxR;
+  ctx.strokeStyle = 'rgba(255,255,255,.05)';
+  ctx.lineWidth = 1;
+  for (let ring = 1; ring <= maxR; ring++) {
+    ctx.beginPath(); ctx.arc(cx, cy, ring * scale, 0, Math.PI*2); ctx.stroke();
+  }
+  ctx.fillStyle = 'rgba(96,165,250,.8)';
+  for (let i = 0; i < msg.ranges.length; i++) {
+    const r = msg.ranges[i];
+    if (!isFinite(r) || r < 0.05 || r > msg.range_max) continue;
+    const a = msg.angle_min + i * msg.angle_increment;
+    ctx.fillRect(Math.round(cx + r*Math.cos(a)*scale), Math.round(cy - r*Math.sin(a)*scale), 2, 2);
+  }
+  ctx.fillStyle = '#3b82f6';
+  ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI*2); ctx.fill();
+}
+
+// ── Scan button ───────────────────────────────────────────────────────────
+
+document.getElementById('scan-btn').addEventListener('click', () => {
+  scanActive = !scanActive;
+  const btn = document.getElementById('scan-btn');
+  btn.textContent = scanActive ? 'Scan ON' : 'Scan OFF';
+  btn.classList.toggle('active', scanActive);
+  if (scanActive) startScan();
+  else { clearScan(); startLiveScan(); }
+});
+document.getElementById('clear-btn').addEventListener('click', () => {
+  clearScan();
+  if (scanActive) startScan();
+});
+
+// ── Drive ─────────────────────────────────────────────────────────────────
+
+function publishDrive() {
+  if (!cmdVel) return;
+  const lin = (held.fwd  ? 1 : 0) - (held.back  ? 1 : 0);
+  const ang = (held.left ? 1 : 0) - (held.right ? 1 : 0);
+  cmdVel.publish(new ROSLIB.Message({
+    linear:  { x: lin * linSpeed, y:0, z:0 },
+    angular: { x:0, y:0, z: ang * angSpeed },
+  }));
+}
+function sendStop() {
+  if (!cmdVel) return;
+  cmdVel.publish(new ROSLIB.Message({ linear:{x:0,y:0,z:0}, angular:{x:0,y:0,z:0} }));
+}
+function clamp(v,lo,hi) { return Math.max(lo,Math.min(hi,v)); }
+function setLin(v) { linSpeed = clamp(v, LIN_MIN, LIN_MAX); document.getElementById('lin-val').textContent = linSpeed.toFixed(2); }
+function setAng(v) { angSpeed = clamp(v, ANG_MIN, ANG_MAX); document.getElementById('ang-val').textContent = angSpeed.toFixed(2); }
+
+function emergencyStop() {
+  Object.keys(held).forEach(k => held[k] = false);
+  document.querySelectorAll('.dk').forEach(b => b.classList.remove('pressed'));
+  sendStop();
+  const btn = document.getElementById('estop-btn');
+  btn.classList.add('fired');
+  setTimeout(() => btn.classList.remove('fired'), 300);
+}
+
+// D-pad buttons
+const DPAD = {
+  'dk-fwd':   'fwd',
+  'dk-back':  'back',
+  'dk-left':  'left',
+  'dk-right': 'right',
+};
+Object.entries(DPAD).forEach(([id, dir]) => {
+  const btn = document.getElementById(id);
+  const press   = e => { e.preventDefault(); held[dir] = true;  btn.classList.add('pressed'); };
+  const release = e => { e.preventDefault(); held[dir] = false; btn.classList.remove('pressed'); };
+  btn.addEventListener('pointerdown',   press);
+  btn.addEventListener('pointerup',     release);
+  btn.addEventListener('pointerleave',  release);
+  btn.addEventListener('pointercancel', release);
+});
+document.getElementById('dk-stop').addEventListener('pointerdown', e => { e.preventDefault(); emergencyStop(); });
+document.getElementById('estop-btn').addEventListener('click', emergencyStop);
+
+// Speed buttons
+document.getElementById('lin-inc').addEventListener('click', () => setLin(linSpeed * STEP));
+document.getElementById('lin-dec').addEventListener('click', () => setLin(linSpeed / STEP));
+document.getElementById('ang-inc').addEventListener('click', () => setAng(angSpeed * STEP));
+document.getElementById('ang-dec').addEventListener('click', () => setAng(angSpeed / STEP));
+
+// Keyboard
+const KEY_MAP = {
+  w:'fwd', ArrowUp:'fwd', s:'back', ArrowDown:'back',
+  a:'left', ArrowLeft:'left', d:'right', ArrowRight:'right',
+};
+document.addEventListener('keydown', e => {
+  if (e.repeat || document.activeElement?.tagName === 'INPUT') return;
+  if (e.key === ' ') { e.preventDefault(); emergencyStop(); return; }
+  if (e.key === 'q') { setLin(linSpeed*STEP); setAng(angSpeed*STEP); return; }
+  if (e.key === 'z') { setLin(linSpeed/STEP); setAng(angSpeed/STEP); return; }
+  if (e.key === '=') { setLin(linSpeed*STEP); return; }
+  if (e.key === '-') { setLin(linSpeed/STEP); return; }
+  if (e.key === 'e') { setAng(angSpeed*STEP); return; }
+  if (e.key === 'c') { setAng(angSpeed/STEP); return; }
+  const dir = KEY_MAP[e.key] || KEY_MAP[e.key.toLowerCase()];
+  if (dir) { e.preventDefault(); held[dir] = true; }
+});
+document.addEventListener('keyup', e => {
+  const dir = KEY_MAP[e.key] || KEY_MAP[e.key.toLowerCase()];
+  if (dir) held[dir] = false;
+});
+window.addEventListener('blur', () => { Object.keys(held).forEach(k => held[k]=false); sendStop(); });
+
+connect();
+</script>
+</body>
+</html>
