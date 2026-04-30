@@ -24,8 +24,8 @@ header { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .ros-dot.ok  { background: #22c55e; }
 .ros-dot.err { background: #ef4444; }
 .grid {
-  display: grid; grid-template-columns: repeat(2, 1fr);
-  gap: 16px; width: 100%; max-width: 520px;
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 16px; width: 100%; max-width: 620px;
 }
 .card {
   display: flex; flex-direction: column;
@@ -94,6 +94,14 @@ header { display: flex; flex-direction: column; align-items: center; gap: 8px; }
     </svg>
     <div class="card-title">Face</div>
     <div class="card-desc">Robot face screen (opens in new tab)</div>
+  </a>
+
+  <a class="card" href="/static/logs.html">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+    </svg>
+    <div class="card-title">Logs</div>
+    <div class="card-desc">Live sensor data — LiDAR, odom, IMU, cmd_vel</div>
   </a>
 
 </div>

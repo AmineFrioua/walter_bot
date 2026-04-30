@@ -13,215 +13,374 @@ body {
   user-select: none;
 }
 
-/* Header */
+/* ── Header ── */
 header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 16px; background: #0d0f18;
-  border-bottom: 1px solid #1a1d2e; flex-shrink: 0; gap: 12px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; background: #0d0f18;
+  border-bottom: 1px solid #1a1d2e; flex-shrink: 0;
 }
-.back { text-decoration: none; color: #334155; font-size: .85rem; }
+.back { text-decoration: none; color: #334155; font-size: .82rem; padding: 4px 0; }
 .back:hover { color: #60a5fa; }
-.hdr-title { font-size: .9rem; font-weight: 700; }
-.conn {
-  display: flex; align-items: center; gap: 6px;
-  font-size: .72rem; font-family: monospace; color: #475569;
+.hdr-title { font-size: .88rem; font-weight: 700; margin-right: auto; }
+.tab-btns { display: flex; gap: 4px; }
+.tab-btn {
+  padding: 5px 14px; border-radius: 6px; border: 1px solid #1a1d2e;
+  background: #13151f; color: #334155; font-size: .72rem; font-weight: 700;
+  cursor: pointer; letter-spacing: .06em; text-transform: uppercase;
+  transition: background .12s, color .12s, border-color .12s;
 }
+.tab-btn.active { background: #1c2d47; border-color: #3b82f6; color: #60a5fa; }
+.conn { display: flex; align-items: center; gap: 5px; font-size: .68rem; font-family: monospace; color: #334155; }
 .conn-dot { width:7px; height:7px; border-radius:50%; background:#334155; flex-shrink:0; }
-.conn-dot.ok  { background:#22c55e; }
+.conn-dot.ok { background:#22c55e; }
 .conn-dot.err { background:#ef4444; }
 
-/* Main layout */
+/* ── Workspace ── */
 .workspace { flex:1; display:flex; min-height:0; }
 
-/* Map area */
+/* ── Map area ── */
 #map-area {
   flex:1; position:relative; background:#090b12; overflow:hidden; min-width:0;
+  cursor: default;
 }
+#map-area.edit-mode { cursor: crosshair; }
 #map-canvas, #scan-canvas {
-  position:absolute; inset:0; width:100%; height:100%; image-rendering:pixelated;
+  position:absolute; inset:0; width:100%; height:100%;
+  image-rendering:pixelated; pointer-events:none;
 }
-#scan-canvas { pointer-events:none; }
+#scan-canvas { z-index: 2; }
+#overlay {
+  position:absolute; inset:0; z-index:3; pointer-events:none;
+}
+#overlay.edit-mode { pointer-events: auto; }
 #robot-dot {
   position:absolute; width:14px; height:14px; border-radius:50%;
   background:#3b82f6; border:3px solid #fff;
-  transform:translate(-50%,-50%); pointer-events:none;
-  display:none; z-index:10; box-shadow:0 0 6px rgba(59,130,246,.6);
+  transform:translate(-50%,-50%); pointer-events:none; display:none;
+  z-index:10; box-shadow:0 0 8px rgba(59,130,246,.7);
 }
-#map-status {
-  position:absolute; inset:0;
-  display:flex; flex-direction:column; align-items:center; justify-content:center;
-  gap:8px; color:#1e2537; font-size:.75rem; font-family:monospace;
-  pointer-events:none;
+#robot-heading {
+  position:absolute; width:2px; height:20px;
+  background:#60a5fa; transform-origin:bottom center;
+  pointer-events:none; display:none; z-index:10;
 }
-#map-status.hidden { display:none; }
+#map-placeholder {
+  position:absolute; inset:0; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:8px;
+  color:#1e2537; font-size:.72rem; font-family:monospace;
+  pointer-events:none; z-index:1;
+}
+#map-placeholder.hidden { display:none; }
 #map-info {
   position:absolute; bottom:8px; left:10px;
-  font-family:monospace; font-size:.6rem; color:#1e2537;
+  font-family:monospace; font-size:.58rem; color:#1e2537;
   pointer-events:none; z-index:5;
 }
+#front-banner {
+  position:absolute; top:8px; left:50%; transform:translateX(-50%);
+  background:rgba(13,15,24,.85); border:1px solid #1a1d2e;
+  border-radius:6px; padding:4px 12px;
+  font-family:monospace; font-size:.72rem; color:#f59e0b;
+  pointer-events:none; z-index:6; display:none;
+}
 
-/* Right panel */
+/* ── Waypoint overlays ── */
+.wp-dot {
+  position:absolute; border-radius:50%; transform:translate(-50%,-50%);
+  pointer-events:auto; cursor:pointer; z-index:4;
+  transition:transform .1s, box-shadow .1s;
+}
+.wp-dot:hover { transform:translate(-50%,-50%) scale(1.4); }
+.wp-dot.table   { width:14px; height:14px; background:#f59e0b; border:2px solid rgba(255,255,255,.6); }
+.wp-dot.origin  { width:16px; height:16px; background:#22c55e; border:2px solid rgba(255,255,255,.6); }
+.wp-dot.obstacle{ width:12px; height:12px; background:#ef4444; border:2px solid rgba(255,255,255,.5); border-radius:3px; }
+.wp-dot.selected { box-shadow:0 0 0 3px #3b82f6, 0 0 10px rgba(59,130,246,.4); }
+.wp-label {
+  position:absolute; transform:translate(-50%,8px);
+  font-size:.58rem; font-weight:700;
+  color:rgba(255,255,255,.85); text-shadow:0 1px 3px #000;
+  pointer-events:none; white-space:nowrap; z-index:5;
+}
+.wp-rect-table {
+  position:absolute; border:1.5px solid rgba(245,158,11,.5);
+  background:rgba(245,158,11,.07);
+  pointer-events:none; z-index:3;
+}
+.wp-rect-table.selected { border-color:rgba(59,130,246,.7); background:rgba(59,130,246,.09); }
+.wp-rect-obstacle {
+  position:absolute; border:2px solid rgba(239,68,68,.55);
+  background:rgba(239,68,68,.07);
+  pointer-events:none; z-index:3;
+}
+.wp-rect-obstacle.selected { border-color:#3b82f6; }
+
+/* ── Right panel ── */
 #panel {
-  width:240px; background:#0d0f18; border-left:1px solid #1a1d2e;
-  display:flex; flex-direction:column; gap:0; flex-shrink:0; overflow-y:auto;
+  width:244px; background:#0d0f18; border-left:1px solid #1a1d2e;
+  display:flex; flex-direction:column; flex-shrink:0; overflow:hidden;
 }
-.sect { padding:10px; border-bottom:1px solid #1a1d2e; display:flex; flex-direction:column; gap:8px; }
-.sect-label {
-  font-size:.58rem; text-transform:uppercase; letter-spacing:.1em;
-  color:#1e2537; font-weight:700;
-}
+.tab-panel { display:none; flex-direction:column; flex:1; overflow-y:auto; min-height:0; }
+.tab-panel.active { display:flex; }
+.sect { padding:10px; border-bottom:1px solid #1a1d2e; display:flex; flex-direction:column; gap:8px; flex-shrink:0; }
+.sect-lbl { font-size:.58rem; text-transform:uppercase; letter-spacing:.1em; color:#1e2537; font-weight:700; }
 
-/* Scan buttons */
-.btn-row { display:flex; gap:6px; }
+/* Buttons */
 .btn {
-  padding:7px 10px; border-radius:6px; border:1px solid #1a1d2e;
-  background:#13151f; color:#475569; font-size:.75rem; font-weight:600;
-  cursor:pointer; transition:background .12s, color .12s, border-color .12s;
-  flex:1; text-align:center;
+  padding:6px 10px; border-radius:6px; border:1px solid #1a1d2e;
+  background:#13151f; color:#475569; font-size:.73rem; font-weight:600;
+  cursor:pointer; transition:background .12s, color .12s, border-color .12s; text-align:center;
 }
 .btn:hover { background:#1a1d2e; color:#e2e8f0; }
 .btn.active { background:#1c2d47; border-color:#3b82f6; color:#60a5fa; }
+.btn-row { display:flex; gap:5px; }
+.btn-row .btn { flex:1; }
+.btn-primary { background:#1e3a5f; border-color:#3b82f6; color:#93c5fd; }
+.btn-primary:hover { background:#1c3566; }
+.btn-danger { background:#140606; border-color:#3f1515; color:#ef4444; }
+.btn-danger:hover { background:#2d0f0f; }
+
+/* Tool group */
+.tool-grp { display:flex; border:1px solid #1a1d2e; border-radius:6px; overflow:hidden; }
+.tool-btn {
+  flex:1; padding:7px 4px; border:none; border-right:1px solid #1a1d2e;
+  background:#13151f; color:#334155; cursor:pointer;
+  font-size:.6rem; font-weight:700; text-transform:uppercase; letter-spacing:.07em;
+  transition:background .12s, color .12s;
+}
+.tool-btn:last-child { border-right:none; }
+.tool-btn.active { background:#1c2d47; color:#60a5fa; }
+.tool-btn:hover:not(.active) { background:#1a1d2e; color:#94a3b8; }
+
+/* Item list */
+.item-list { display:flex; flex-direction:column; gap:4px; flex:1; overflow-y:auto; min-height:0; padding:6px 10px; }
+.item-row {
+  display:flex; align-items:center; gap:7px; padding:6px 9px;
+  background:#13151f; border:1px solid #1a1d2e; border-radius:6px;
+  cursor:pointer; flex-shrink:0; transition:border-color .1s;
+}
+.item-row:hover { border-color:#253050; }
+.item-row.selected { border-color:#3b82f6; }
+.item-color { width:9px; height:9px; border-radius:50%; flex-shrink:0; }
+.item-color.table    { background:#f59e0b; }
+.item-color.origin   { background:#22c55e; }
+.item-color.obstacle { background:#ef4444; border-radius:2px; }
+.item-name { flex:1; font-size:.75rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.item-del { width:18px; height:18px; border-radius:3px; border:none; background:transparent; color:#1e2537; cursor:pointer; font-size:.8rem; display:flex; align-items:center; justify-content:center; }
+.item-del:hover { background:#2d0f0f; color:#ef4444; }
+.no-items { font-size:.7rem; color:#1e2537; padding:4px 0; }
+.edit-hint { font-size:.65rem; color:#1e2537; line-height:1.6; }
+
+/* Inline edit form */
+.edit-form { padding:10px; background:#13151f; border-radius:8px; border:1px solid #1a1d2e; display:flex; flex-direction:column; gap:7px; flex-shrink:0; margin:0 10px 8px; }
+.form-row { display:flex; align-items:center; gap:7px; }
+.form-lbl { font-size:.58rem; text-transform:uppercase; letter-spacing:.07em; color:#334155; width:48px; flex-shrink:0; font-family:monospace; }
+.form-inp { flex:1; padding:5px 8px; border-radius:4px; border:1px solid #1a1d2e; background:#0d0f18; color:#e2e8f0; font-size:.78rem; }
+.form-inp:focus { outline:none; border-color:#3b82f6; }
 
 /* D-pad */
-.dpad {
-  display:grid; grid-template-columns:repeat(3,52px);
-  grid-template-rows:repeat(3,52px); gap:4px; align-self:center;
-}
-.dk {
-  background:#0d0f18; border:1px solid #1a1d2e; border-bottom:3px solid #07080f;
-  border-radius:8px; color:#1e2537; font-size:1.1rem; cursor:pointer;
-  display:flex; align-items:center; justify-content:center;
-  touch-action:none; transition:background .07s, color .07s, border-color .07s, transform .07s;
-}
+.dpad { display:grid; grid-template-columns:repeat(3,52px); grid-template-rows:repeat(3,52px); gap:4px; align-self:center; }
+.dk { background:#0d0f18; border:1px solid #1a1d2e; border-bottom:3px solid #07080f; border-radius:8px; color:#1e2537; font-size:1.1rem; cursor:pointer; display:flex; align-items:center; justify-content:center; touch-action:none; transition:background .07s, color .07s, border-color .07s, transform .07s; }
 .dk.pressed { background:#1c2d47; border-color:#2563eb; border-bottom-color:#1d4ed8; color:#93c5fd; transform:translateY(2px); }
-.dk.stop { border-color:#2d0f0f; background:#0b0505; color:#3f1515; font-size:.55rem; font-weight:700; letter-spacing:.04em; }
+.dk.stop { border-color:#2d0f0f; background:#0b0505; color:#3f1515; font-size:.52rem; font-weight:700; letter-spacing:.04em; }
 .dk.stop.pressed { background:#3a0f0f; border-color:#ef4444; color:#fca5a5; }
-
-/* Speed */
-.spd-row { display:flex; align-items:center; gap:6px; }
-.spd-lbl { font-size:.6rem; text-transform:uppercase; letter-spacing:.08em; color:#334155; font-family:monospace; width:44px; flex-shrink:0; }
-.spd-val { font-family:monospace; font-size:.95rem; font-weight:500; flex:1; }
-.spd-unit { font-family:monospace; font-size:.58rem; color:#1e2537; }
-.spd-btns { display:flex; gap:3px; }
-.spd-adj {
-  width:22px; height:22px; border-radius:4px; border:1px solid #1a1d2e;
-  background:#0d0f18; color:#334155; font-size:.8rem;
-  cursor:pointer; display:flex; align-items:center; justify-content:center;
-}
-.spd-adj:hover { background:#1c2d47; color:#93c5fd; border-color:#2563eb; }
-.spd-hint { font-family:monospace; font-size:.57rem; color:#1a1d2e; text-align:center; }
-
-/* E-stop */
-.estop {
-  width:100%; padding:10px; border-radius:6px;
-  border:1px solid #3f1515; background:#0b0505; color:#ef4444;
-  font-size:.68rem; font-weight:700; cursor:pointer;
-  letter-spacing:.14em; text-transform:uppercase; font-family:monospace;
-}
+.estop { width:100%; padding:9px; border-radius:6px; border:1px solid #3f1515; background:#0b0505; color:#ef4444; font-size:.65rem; font-weight:700; cursor:pointer; letter-spacing:.14em; text-transform:uppercase; font-family:monospace; }
 .estop:hover { background:#2d0f0f; }
 .estop.fired { background:#450a0a; border-color:#ef4444; }
+
+/* Speed */
+.spd-row { display:flex; align-items:center; gap:5px; }
+.spd-lbl { font-size:.58rem; text-transform:uppercase; letter-spacing:.08em; color:#334155; font-family:monospace; width:44px; flex-shrink:0; }
+.spd-val { font-family:monospace; font-size:.9rem; font-weight:500; flex:1; }
+.spd-unit { font-family:monospace; font-size:.56rem; color:#1e2537; }
+.spd-btns { display:flex; gap:3px; }
+.spd-adj { width:22px; height:22px; border-radius:4px; border:1px solid #1a1d2e; background:#0d0f18; color:#334155; font-size:.8rem; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+.spd-adj:hover { background:#1c2d47; color:#93c5fd; border-color:#2563eb; }
+.spd-hint { font-family:monospace; font-size:.55rem; color:#1a1d2e; text-align:center; }
+
+/* Front distance card */
+.front-card { display:flex; align-items:center; justify-content:space-between; padding:8px 12px; background:#13151f; border-radius:6px; border:1px solid #1a1d2e; flex-shrink:0; }
+.front-lbl { font-size:.6rem; text-transform:uppercase; letter-spacing:.08em; color:#334155; font-family:monospace; }
+.front-val { font-family:monospace; font-size:1rem; font-weight:600; color:#f59e0b; }
+
+/* Modal */
+#modal-bg { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); align-items:center; justify-content:center; z-index:100; }
+#modal-bg.open { display:flex; }
+#modal { background:#13151f; border:1px solid #253050; border-radius:12px; padding:20px; width:280px; display:flex; flex-direction:column; gap:11px; }
+#modal h3 { font-size:.88rem; font-weight:700; }
+.modal-btns { display:flex; gap:7px; }
+.modal-btns .btn { flex:1; padding:9px; }
 </style>
 </head>
 <body>
 
 <header>
-  <a class="back" href="/">← Back</a>
-  <span class="hdr-title">Map Building</span>
+  <a class="back" href="/">←</a>
+  <span class="hdr-title">Map</span>
+  <div class="tab-btns">
+    <button class="tab-btn active" id="tab-drive" onclick="setTab('drive')">Drive</button>
+    <button class="tab-btn"        id="tab-edit"  onclick="setTab('edit')">Edit</button>
+  </div>
   <div class="conn">
     <div class="conn-dot" id="conn-dot"></div>
-    <span id="conn-label">Connecting</span>
+    <span id="conn-label">…</span>
   </div>
 </header>
 
 <div class="workspace">
 
-  <!-- Map canvas -->
+  <!-- ── Map canvas ── -->
   <div id="map-area">
     <canvas id="map-canvas"></canvas>
     <canvas id="scan-canvas"></canvas>
+    <div id="overlay"></div>
     <div id="robot-dot"></div>
-    <div id="map-status">
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".3">
+    <div id="robot-heading"></div>
+    <div id="map-placeholder">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".25">
         <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
       </svg>
-      <span id="map-status-text">Waiting for map…</span>
+      Waiting for SLAM map…
     </div>
     <div id="map-info"></div>
+    <div id="front-banner">Front: —</div>
   </div>
 
-  <!-- Right panel -->
+  <!-- ── Right panel ── -->
   <div id="panel">
 
-    <div class="sect">
-      <span class="sect-label">LiDAR Scan</span>
-      <div class="btn-row">
-        <button class="btn" id="scan-btn">Scan OFF</button>
-        <button class="btn" id="clear-btn">Clear</button>
-      </div>
-      <p style="font-size:.65rem;color:#1e2537;line-height:1.6">
-        Drive around the room. Toggle Scan to paint LiDAR points onto the map.
-      </p>
-    </div>
-
-    <div class="sect">
-      <span class="sect-label">Drive</span>
-      <div class="dpad">
-        <div></div>
-        <button class="dk" id="dk-fwd">↑</button>
-        <div></div>
-        <button class="dk" id="dk-left">←</button>
-        <button class="dk stop" id="dk-stop">STOP</button>
-        <button class="dk" id="dk-right">→</button>
-        <div></div>
-        <button class="dk" id="dk-back">↓</button>
-        <div></div>
-      </div>
-    </div>
-
-    <div class="sect">
-      <span class="sect-label">Speed</span>
-      <div class="spd-row">
-        <span class="spd-lbl">Linear</span>
-        <span class="spd-val" id="lin-val">0.05</span>
-        <span class="spd-unit">m/s</span>
-        <div class="spd-btns">
-          <button class="spd-adj" id="lin-dec">−</button>
-          <button class="spd-adj" id="lin-inc">+</button>
+    <!-- DRIVE tab -->
+    <div class="tab-panel active" id="pane-drive">
+      <div class="sect">
+        <div class="front-card">
+          <span class="front-lbl">Front obstacle</span>
+          <span class="front-val" id="front-val">—</span>
         </div>
       </div>
-      <div class="spd-row">
-        <span class="spd-lbl">Angular</span>
-        <span class="spd-val" id="ang-val">0.50</span>
-        <span class="spd-unit">r/s</span>
-        <div class="spd-btns">
-          <button class="spd-adj" id="ang-dec">−</button>
-          <button class="spd-adj" id="ang-inc">+</button>
+      <div class="sect">
+        <span class="sect-lbl">LiDAR</span>
+        <div class="btn-row">
+          <button class="btn active" id="scan-btn">Live scan</button>
+          <button class="btn" id="accum-btn">Accumulate</button>
+          <button class="btn" id="clear-btn" title="Clear scan points">✕</button>
         </div>
       </div>
-      <div class="spd-hint">Q/Z both · =/- linear · E/C angular</div>
+      <div class="sect">
+        <span class="sect-lbl">Drive</span>
+        <div class="dpad">
+          <div></div>
+          <button class="dk" id="dk-fwd">↑</button>
+          <div></div>
+          <button class="dk" id="dk-left">←</button>
+          <button class="dk stop" id="dk-stop">STOP</button>
+          <button class="dk" id="dk-right">→</button>
+          <div></div>
+          <button class="dk" id="dk-back">↓</button>
+          <div></div>
+        </div>
+      </div>
+      <div class="sect">
+        <span class="sect-lbl">Speed</span>
+        <div class="spd-row">
+          <span class="spd-lbl">Linear</span>
+          <span class="spd-val" id="lin-val">0.05</span>
+          <span class="spd-unit">m/s</span>
+          <div class="spd-btns">
+            <button class="spd-adj" id="lin-dec">−</button>
+            <button class="spd-adj" id="lin-inc">+</button>
+          </div>
+        </div>
+        <div class="spd-row">
+          <span class="spd-lbl">Angular</span>
+          <span class="spd-val" id="ang-val">0.50</span>
+          <span class="spd-unit">r/s</span>
+          <div class="spd-btns">
+            <button class="spd-adj" id="ang-dec">−</button>
+            <button class="spd-adj" id="ang-inc">+</button>
+          </div>
+        </div>
+        <div class="spd-hint">Q/Z both · =/- linear · E/C angular</div>
+      </div>
+      <div class="sect">
+        <button class="estop" id="estop-btn">Emergency Stop [space]</button>
+      </div>
     </div>
 
-    <div class="sect">
-      <button class="estop" id="estop-btn">Emergency Stop [space]</button>
+    <!-- EDIT tab -->
+    <div class="tab-panel" id="pane-edit">
+      <div class="sect">
+        <span class="sect-lbl">Tool</span>
+        <div class="tool-grp">
+          <button class="tool-btn active" data-tool="table"    onclick="setTool(this)">Table</button>
+          <button class="tool-btn"        data-tool="obstacle" onclick="setTool(this)">Zone</button>
+          <button class="tool-btn"        data-tool="origin"   onclick="setTool(this)">Origin</button>
+        </div>
+        <p class="edit-hint" id="edit-hint">Click on the map to place a table.</p>
+      </div>
+      <div id="edit-form-wrap"></div>
+      <div class="sect" style="border-top:1px solid #1a1d2e; padding-bottom:4px;">
+        <span class="sect-lbl">Items</span>
+      </div>
+      <div class="item-list" id="item-list"></div>
     </div>
 
+  </div><!-- /panel -->
+</div><!-- /workspace -->
+
+<!-- ── Add item modal ── -->
+<div id="modal-bg">
+  <div id="modal">
+    <h3 id="modal-title">Add Table</h3>
+    <div class="form-row">
+      <span class="form-lbl">Name</span>
+      <input class="form-inp" id="m-name" type="text" placeholder="Table 1" maxlength="30" autocomplete="off">
+    </div>
+    <div id="m-table-extra">
+      <div class="form-row">
+        <span class="form-lbl">Number</span>
+        <input class="form-inp" id="m-num" type="number" min="1" placeholder="1" style="width:70px;flex:none">
+      </div>
+      <div class="form-row">
+        <span class="form-lbl">Width</span>
+        <input class="form-inp" id="m-w" type="number" step="0.1" min="0.1" placeholder="0.8">
+        <span style="font-size:.6rem;color:#334155">m</span>
+      </div>
+      <div class="form-row">
+        <span class="form-lbl">Depth</span>
+        <input class="form-inp" id="m-d" type="number" step="0.1" min="0.1" placeholder="0.6">
+        <span style="font-size:.6rem;color:#334155">m</span>
+      </div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn" id="m-cancel">Cancel</button>
+      <button class="btn btn-primary" id="m-ok">Save</button>
+    </div>
   </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
 <script>
-const ROSBRIDGE = `ws://${location.hostname}:9090`;
-const LIN_MAX = 0.20, LIN_MIN = 0.01, ANG_MAX = 1.5, ANG_MIN = 0.05, STEP = 1.1;
+// ── Config ────────────────────────────────────────────────────────────────
+const ROSBRIDGE   = `ws://${location.hostname}:9090`;
+const LIN_MAX=0.20, LIN_MIN=0.01, ANG_MAX=1.5, ANG_MIN=0.05, STEP=1.1;
+const FRONT_ARC   = 0.26; // ±15° in radians — "frontal" detection cone
 
-let linSpeed = 0.05, angSpeed = 0.50;
-let mapMeta = null, robotPose = { x:0, y:0, theta:0 };
-let scanActive = false, scanSub = null;
-let cmdVel = null, pubLoop = null;
-const held = { fwd:false, back:false, left:false, right:false };
+// ── State ─────────────────────────────────────────────────────────────────
+let ros, cmdVel;
+let mapMeta   = null;
+let robotPose = { x:0, y:0, theta:0 };
+let waypoints = {};
+let selectedKey = null;
+let drag      = null;       // { key, moved }
+let pendingClick = null;    // { x, y } world coords
+let editTool  = 'table';
+let activeTab = 'drive';
+let scanMode  = 'live';     // 'live' | 'accumulate' | 'off'
+let scanSub   = null;
+let pubLoop   = null;
+let linSpeed=0.05, angSpeed=0.50;
+const held    = { fwd:false, back:false, left:false, right:false };
 
-// ── ROS connection ────────────────────────────────────────────────────────
-
-let ros;
+// ── ROS ───────────────────────────────────────────────────────────────────
 function connect() {
   ros = new ROSLIB.Ros({ url: ROSBRIDGE });
   ros.on('connection', () => {
@@ -230,31 +389,28 @@ function connect() {
     if (!pubLoop) pubLoop = setInterval(publishDrive, 100);
     subscribeMap();
     subscribeOdom();
-    if (scanActive) startScan();
-    else startLiveScan();
+    applyScanMode();
   });
-  ros.on('error', () => setConn(false));
-  ros.on('close', () => {
+  ros.on('error',  () => setConn(false));
+  ros.on('close',  () => {
     setConn(false);
     clearInterval(pubLoop); pubLoop = null;
+    stopScan();
     setTimeout(connect, 3000);
   });
 }
 function setConn(ok) {
-  document.getElementById('conn-dot').className = 'conn-dot' + (ok ? ' ok' : ' err');
+  document.getElementById('conn-dot').className  = 'conn-dot' + (ok ? ' ok' : ' err');
   document.getElementById('conn-label').textContent = ok ? 'Connected' : 'Disconnected';
 }
 
 // ── Map ───────────────────────────────────────────────────────────────────
-
 function subscribeMap() {
-  const t = new ROSLIB.Topic({
-    ros, name:'/map', messageType:'nav_msgs/OccupancyGrid', throttle_rate: 2000,
-  });
+  const t = new ROSLIB.Topic({ ros, name:'/map', messageType:'nav_msgs/OccupancyGrid', throttle_rate:2000 });
   t.subscribe(msg => {
     mapMeta = msg.info;
     drawMap(msg);
-    document.getElementById('map-status').classList.add('hidden');
+    document.getElementById('map-placeholder').classList.add('hidden');
     document.getElementById('map-info').textContent =
       `${msg.info.width}×${msg.info.height}  ${msg.info.resolution.toFixed(3)} m/px`;
   });
@@ -267,63 +423,90 @@ function drawMap(msg) {
   canvas.height = height;
   const ctx = canvas.getContext('2d');
   const img = ctx.createImageData(width, height);
+
+  // First pass: base colours
   for (let i = 0; i < data.length; i++) {
-    const v = data[i];
-    let r, g, b;
-    if      (v === -1) { r=70;  g=70;  b=90;  }   // unknown  — dark blue-grey
-    else if (v ===  0) { r=210; g=210; b=210; }   // free     — light grey
-    else               { r=20;  g=20;  b=30;  }   // occupied — near black
-    // flip Y: ROS Y-up → canvas Y-down
-    const px = (height - 1 - Math.floor(i / width)) * width + (i % width);
-    img.data[px*4]   = r;
-    img.data[px*4+1] = g;
-    img.data[px*4+2] = b;
-    img.data[px*4+3] = 255;
+    const v   = data[i];
+    const x   = i % width;
+    const y   = Math.floor(i / width);
+    const py  = (height - 1 - y) * width + x;   // flip Y
+    if (v === -1) {
+      img.data[py*4]=55;  img.data[py*4+1]=58;  img.data[py*4+2]=78;  img.data[py*4+3]=255;
+    } else if (v === 0) {
+      img.data[py*4]=200; img.data[py*4+1]=205; img.data[py*4+2]=210; img.data[py*4+3]=255;
+    } else {
+      img.data[py*4]=25;  img.data[py*4+1]=28;  img.data[py*4+2]=40;  img.data[py*4+3]=255;
+    }
   }
+
+  // Second pass: highlight obstacle EDGES in blue
+  for (let i = 0; i < data.length; i++) {
+    if (data[i] < 50) continue;   // not occupied
+    const x = i % width;
+    const y = Math.floor(i / width);
+    const neighbors = [data[i-1], data[i+1], data[i-width], data[i+width]];
+    if (neighbors.some(v => v === 0)) {          // adjacent to free space → edge
+      const py = (height - 1 - y) * width + x;
+      img.data[py*4]=90;  img.data[py*4+1]=130; img.data[py*4+2]=210; img.data[py*4+3]=255;
+    }
+  }
+
   ctx.putImageData(img, 0, 0);
-  syncScanCanvas();
+  syncScan();
+  renderOverlay();
   updateRobot();
 }
 
 // ── Odometry ──────────────────────────────────────────────────────────────
-
 function subscribeOdom() {
-  const t = new ROSLIB.Topic({
-    ros, name:'/odom', messageType:'nav_msgs/Odometry', throttle_rate:100,
-  });
+  const t = new ROSLIB.Topic({ ros, name:'/odom', messageType:'nav_msgs/Odometry', throttle_rate:100 });
   t.subscribe(msg => {
     const p = msg.pose.pose.position;
     const q = msg.pose.pose.orientation;
-    robotPose = { x: p.x, y: p.y, theta: 2 * Math.atan2(q.z, q.w) };
+    robotPose = { x:p.x, y:p.y, theta: 2*Math.atan2(q.z, q.w) };
     updateRobot();
   });
 }
-
 function updateRobot() {
   if (!mapMeta) return;
-  const pos = mapToScreen(robotPose.x, robotPose.y);
+  const pos = worldToScreen(robotPose.x, robotPose.y);
   if (!pos) return;
-  const el = document.getElementById('robot-dot');
-  el.style.left = pos.left + 'px';
-  el.style.top  = pos.top  + 'px';
-  el.style.display = 'block';
+  const dot = document.getElementById('robot-dot');
+  dot.style.left    = pos.left + 'px';
+  dot.style.top     = pos.top  + 'px';
+  dot.style.display = 'block';
+
+  // Heading line
+  const hdg = document.getElementById('robot-heading');
+  hdg.style.left      = pos.left + 'px';
+  hdg.style.top       = (pos.top - 20) + 'px';
+  hdg.style.transform = `rotate(${-robotPose.theta}rad) translateX(-50%)`;
+  hdg.style.display   = 'block';
 }
 
-// ── Coordinates ───────────────────────────────────────────────────────────
-
-function mapToScreen(mx, my) {
+// ── Coord helpers ─────────────────────────────────────────────────────────
+function worldToScreen(wx, wy) {
   if (!mapMeta) return null;
-  const area = document.getElementById('map-area');
+  const area   = document.getElementById('map-area');
   const scaleX = area.clientWidth  / mapMeta.width;
   const scaleY = area.clientHeight / mapMeta.height;
-  const px = (mx - mapMeta.origin.position.x) / mapMeta.resolution;
-  const py = (my - mapMeta.origin.position.y) / mapMeta.resolution;
+  const px = (wx - mapMeta.origin.position.x) / mapMeta.resolution;
+  const py = (wy - mapMeta.origin.position.y) / mapMeta.resolution;
   return { left: px * scaleX, top: (mapMeta.height - py) * scaleY };
 }
+function screenToWorld(sx, sy) {
+  if (!mapMeta) return null;
+  const area   = document.getElementById('map-area');
+  const scaleX = mapMeta.width  / area.clientWidth;
+  const scaleY = mapMeta.height / area.clientHeight;
+  return {
+    x: sx * scaleX * mapMeta.resolution + mapMeta.origin.position.x,
+    y: (mapMeta.height - sy * scaleY) * mapMeta.resolution + mapMeta.origin.position.y,
+  };
+}
 
-// ── Scan canvas ───────────────────────────────────────────────────────────
-
-function syncScanCanvas() {
+// ── Scan ──────────────────────────────────────────────────────────────────
+function syncScan() {
   const scan = document.getElementById('scan-canvas');
   if (mapMeta) {
     const map = document.getElementById('map-canvas');
@@ -335,178 +518,423 @@ function syncScanCanvas() {
     scan.height = area.clientHeight;
   }
 }
-
 function clearScan() {
   const c = document.getElementById('scan-canvas');
   c.getContext('2d').clearRect(0, 0, c.width, c.height);
 }
-
-// Live scan (non-accumulating, local radar when no map)
-function startLiveScan() {
+function stopScan() {
   if (scanSub) { scanSub.unsubscribe(); scanSub = null; }
-  scanSub = new ROSLIB.Topic({
-    ros, name:'/scan_filtered', messageType:'sensor_msgs/LaserScan', throttle_rate:120,
-  });
-  scanSub.subscribe(msg => {
-    syncScanCanvas();
-    const canvas = document.getElementById('scan-canvas');
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (!mapMeta) { drawRadar(ctx, canvas, msg); return; }
-    ctx.fillStyle = 'rgba(96,165,250,.7)';
-    const { x:rx, y:ry, theta } = robotPose;
-    for (let i = 0; i < msg.ranges.length; i++) {
-      const r = msg.ranges[i];
-      if (!isFinite(r) || r < 0.05 || r > msg.range_max) continue;
-      const angle = msg.angle_min + i * msg.angle_increment + theta;
-      const wx = rx + r * Math.cos(angle);
-      const wy = ry + r * Math.sin(angle);
-      const px = (wx - mapMeta.origin.position.x) / mapMeta.resolution;
-      const py = mapMeta.height - (wy - mapMeta.origin.position.y) / mapMeta.resolution;
-      if (px < 0 || px >= canvas.width || py < 0 || py >= canvas.height) continue;
-      ctx.fillRect(Math.round(px), Math.round(py), 2, 2);
-    }
-  });
 }
 
-// Accumulate scan (paints permanently)
-function startScan() {
-  if (scanSub) { scanSub.unsubscribe(); scanSub = null; }
-  scanSub = new ROSLIB.Topic({
-    ros, name:'/scan_filtered', messageType:'sensor_msgs/LaserScan', throttle_rate:400,
-  });
+function applyScanMode() {
+  stopScan();
+  if (!ros || scanMode === 'off') return;
+  const rate = scanMode === 'live' ? 100 : 350;
+  scanSub = new ROSLIB.Topic({ ros, name:'/scan_filtered', messageType:'sensor_msgs/LaserScan', throttle_rate:rate });
   scanSub.subscribe(msg => {
-    if (!mapMeta) return;
-    syncScanCanvas();
+    syncScan();
     const canvas = document.getElementById('scan-canvas');
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#3b82f6';
+    const ctx    = canvas.getContext('2d');
+    if (scanMode === 'live') ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!mapMeta) { drawRadar(ctx, canvas, msg); return; }
+
+    let frontMin = Infinity, frontPx = null, frontPy = null;
     const { x:rx, y:ry, theta } = robotPose;
+
     for (let i = 0; i < msg.ranges.length; i++) {
       const r = msg.ranges[i];
       if (!isFinite(r) || r < 0.05 || r > msg.range_max) continue;
-      const angle = msg.angle_min + i * msg.angle_increment + theta;
-      const wx = rx + r * Math.cos(angle);
-      const wy = ry + r * Math.sin(angle);
+      const a  = msg.angle_min + i * msg.angle_increment;
+      const wa = a + theta;
+      const wx = rx + r * Math.cos(wa);
+      const wy = ry + r * Math.sin(wa);
       const px = (wx - mapMeta.origin.position.x) / mapMeta.resolution;
       const py = mapMeta.height - (wy - mapMeta.origin.position.y) / mapMeta.resolution;
       if (px < 0 || px >= canvas.width || py < 0 || py >= canvas.height) continue;
+
+      // Frontal detection
+      if (Math.abs(a) < FRONT_ARC && r < frontMin) {
+        frontMin = r; frontPx = Math.round(px); frontPy = Math.round(py);
+      }
+
+      ctx.fillStyle = scanMode === 'live' ? 'rgba(96,165,250,.75)' : '#3b82f6';
       ctx.fillRect(Math.round(px), Math.round(py), 2, 2);
+    }
+
+    // Highlight frontal closest point in orange
+    if (frontPx !== null) {
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillRect(frontPx-1, frontPy-1, 4, 4);
+      const distText = frontMin.toFixed(2) + ' m';
+      document.getElementById('front-val').textContent = distText;
+      document.getElementById('front-banner').textContent = 'Front: ' + distText;
+      document.getElementById('front-banner').style.display = '';
+    } else {
+      document.getElementById('front-val').textContent = '—';
+      document.getElementById('front-banner').style.display = 'none';
     }
   });
 }
 
 function drawRadar(ctx, canvas, msg) {
-  const cx = canvas.width / 2, cy = canvas.height / 2;
+  const cx = canvas.width/2, cy = canvas.height/2;
   const maxR = Math.min(msg.range_max || 6, 6);
   const scale = Math.min(cx, cy) * 0.85 / maxR;
   ctx.strokeStyle = 'rgba(255,255,255,.05)';
-  ctx.lineWidth = 1;
-  for (let ring = 1; ring <= maxR; ring++) {
-    ctx.beginPath(); ctx.arc(cx, cy, ring * scale, 0, Math.PI*2); ctx.stroke();
+  for (let ring=1; ring<=maxR; ring++) {
+    ctx.beginPath(); ctx.arc(cx, cy, ring*scale, 0, Math.PI*2); ctx.stroke();
   }
-  ctx.fillStyle = 'rgba(96,165,250,.8)';
-  for (let i = 0; i < msg.ranges.length; i++) {
+  let frontMin = Infinity;
+  for (let i=0; i<msg.ranges.length; i++) {
     const r = msg.ranges[i];
-    if (!isFinite(r) || r < 0.05 || r > msg.range_max) continue;
+    if (!isFinite(r) || r<0.05 || r>msg.range_max) continue;
     const a = msg.angle_min + i * msg.angle_increment;
-    ctx.fillRect(Math.round(cx + r*Math.cos(a)*scale), Math.round(cy - r*Math.sin(a)*scale), 2, 2);
+    const isFront = Math.abs(a) < FRONT_ARC;
+    ctx.fillStyle = isFront ? '#f59e0b' : 'rgba(96,165,250,.7)';
+    ctx.fillRect(Math.round(cx + r*Math.cos(a)*scale), Math.round(cy - r*Math.sin(a)*scale), isFront ? 3 : 2, isFront ? 3 : 2);
+    if (isFront && r < frontMin) frontMin = r;
   }
+  if (frontMin < Infinity) {
+    document.getElementById('front-val').textContent = frontMin.toFixed(2) + ' m';
+  }
+  // Robot dot
   ctx.fillStyle = '#3b82f6';
   ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy-18); ctx.stroke();
 }
 
-// ── Scan button ───────────────────────────────────────────────────────────
-
+// Scan control buttons
 document.getElementById('scan-btn').addEventListener('click', () => {
-  scanActive = !scanActive;
-  const btn = document.getElementById('scan-btn');
-  btn.textContent = scanActive ? 'Scan ON' : 'Scan OFF';
-  btn.classList.toggle('active', scanActive);
-  if (scanActive) startScan();
-  else { clearScan(); startLiveScan(); }
+  scanMode = 'live';
+  document.getElementById('scan-btn').classList.add('active');
+  document.getElementById('accum-btn').classList.remove('active');
+  clearScan(); applyScanMode();
+});
+document.getElementById('accum-btn').addEventListener('click', () => {
+  scanMode = 'accumulate';
+  document.getElementById('accum-btn').classList.add('active');
+  document.getElementById('scan-btn').classList.remove('active');
+  applyScanMode();
 });
 document.getElementById('clear-btn').addEventListener('click', () => {
   clearScan();
-  if (scanActive) startScan();
+  if (scanMode === 'accumulate') applyScanMode();
 });
 
-// ── Drive ─────────────────────────────────────────────────────────────────
+// ── Overlay rendering ─────────────────────────────────────────────────────
+function renderOverlay() {
+  const layer = document.getElementById('overlay');
+  layer.innerHTML = '';
+  if (!mapMeta) return;
+  const area = document.getElementById('map-area');
+  const scaleX = area.clientWidth  / mapMeta.width;
+  const scaleY = area.clientHeight / mapMeta.height;
 
+  Object.entries(waypoints).forEach(([key, wp]) => {
+    const pos = worldToScreen(wp.x, wp.y);
+    if (!pos) return;
+    const isSel = selectedKey === key;
+
+    if (wp.type === 'obstacle') {
+      const wPx = (wp.width ||1.0) / mapMeta.resolution * scaleX;
+      const dPx = (wp.depth ||1.0) / mapMeta.resolution * scaleY;
+      const box = document.createElement('div');
+      box.className = 'wp-rect-obstacle' + (isSel ? ' selected' : '');
+      box.style.cssText = `left:${pos.left-wPx/2}px;top:${pos.top-dPx/2}px;width:${wPx}px;height:${dPx}px`;
+      layer.appendChild(box);
+    }
+    if (wp.type === 'table') {
+      const wPx = (wp.width ||0.8) / mapMeta.resolution * scaleX;
+      const dPx = (wp.depth ||0.6) / mapMeta.resolution * scaleY;
+      const box = document.createElement('div');
+      box.className = 'wp-rect-table' + (isSel ? ' selected' : '');
+      box.style.cssText = `left:${pos.left-wPx/2}px;top:${pos.top-dPx/2}px;width:${wPx}px;height:${dPx}px`;
+      layer.appendChild(box);
+    }
+
+    // Dot
+    const dot = document.createElement('div');
+    dot.className = `wp-dot ${wp.type||'table'}` + (isSel ? ' selected' : '');
+    dot.style.left = pos.left + 'px';
+    dot.style.top  = pos.top  + 'px';
+    dot.dataset.key = key;
+    dot.addEventListener('pointerdown', onDotDown);
+    layer.appendChild(dot);
+
+    // Label
+    const lbl = document.createElement('div');
+    lbl.className = 'wp-label';
+    lbl.style.left = pos.left + 'px';
+    lbl.style.top  = pos.top  + 'px';
+    lbl.textContent = wp.label || key;
+    layer.appendChild(lbl);
+  });
+}
+
+// ── Drag ─────────────────────────────────────────────────────────────────
+function onDotDown(e) {
+  if (activeTab !== 'edit') return;
+  e.preventDefault(); e.stopPropagation();
+  const key = e.currentTarget.dataset.key;
+  drag = { key, moved: false };
+  selectedKey = key;
+  e.currentTarget.setPointerCapture(e.pointerId);
+  renderOverlay(); renderEditForm(); renderItemList();
+}
+document.getElementById('overlay').addEventListener('pointermove', e => {
+  if (!drag) return;
+  drag.moved = true;
+  const rect = document.getElementById('map-area').getBoundingClientRect();
+  const pos  = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+  if (!pos || !waypoints[drag.key]) return;
+  waypoints[drag.key].x = pos.x;
+  waypoints[drag.key].y = pos.y;
+  renderOverlay();
+});
+document.getElementById('overlay').addEventListener('pointerup', e => {
+  if (!drag) return;
+  if (drag.moved) saveWaypoint(drag.key);
+  drag = null;
+});
+
+// ── Map click (place new item) ────────────────────────────────────────────
+document.getElementById('map-area').addEventListener('click', e => {
+  if (activeTab !== 'edit' || !mapMeta || drag?.moved) return;
+  if (e.target.closest('.wp-dot')) return;      // clicking existing dot
+  const rect = e.currentTarget.getBoundingClientRect();
+  const pos  = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+  if (!pos) return;
+  if (editTool === 'origin') {
+    waypoints['origin'] = { x:pos.x, y:pos.y, theta:0, label:'Origin', type:'origin' };
+    saveWaypoint('origin'); return;
+  }
+  pendingClick = pos;
+  openModal(editTool);
+});
+
+// ── Modal ─────────────────────────────────────────────────────────────────
+function openModal(type, editKey) {
+  document.getElementById('modal-title').textContent = editKey ? `Edit ${type}` : `Add ${type}`;
+  document.getElementById('m-table-extra').style.display = type === 'table' ? '' : 'none';
+  const wp = editKey ? waypoints[editKey] : null;
+  document.getElementById('m-name').value = wp?.label || '';
+  document.getElementById('m-num').value  = wp?.number || '';
+  document.getElementById('m-w').value    = wp?.width  || '0.8';
+  document.getElementById('m-d').value    = wp?.depth  || '0.6';
+  document.getElementById('m-name').placeholder = type === 'table' ? 'Table 1' : 'Zone name';
+  document.getElementById('modal-bg')._editKey  = editKey || null;
+  document.getElementById('modal-bg')._editType = type;
+  document.getElementById('modal-bg').classList.add('open');
+  setTimeout(() => document.getElementById('m-name').focus(), 50);
+}
+function closeModal() {
+  document.getElementById('modal-bg').classList.remove('open');
+  pendingClick = null;
+}
+document.getElementById('m-cancel').addEventListener('click', closeModal);
+document.getElementById('modal-bg').addEventListener('click', e => { if (e.target === document.getElementById('modal-bg')) closeModal(); });
+document.getElementById('m-name').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('m-ok').click();
+  if (e.key === 'Escape') closeModal();
+});
+document.getElementById('m-ok').addEventListener('click', () => {
+  const name = document.getElementById('m-name').value.trim();
+  if (!name) return;
+  const mbg   = document.getElementById('modal-bg');
+  const type  = mbg._editType;
+  const eKey  = mbg._editKey;
+  const key   = eKey || (name.toLowerCase().replace(/\s+/g,'_') + '_' + Date.now().toString(36));
+  const pos   = eKey ? { x:waypoints[eKey].x, y:waypoints[eKey].y } : pendingClick || {x:0,y:0};
+  waypoints[key] = {
+    x:pos.x, y:pos.y, theta:0, label:name, type,
+    ...(type==='table' ? {
+      number: parseInt(document.getElementById('m-num').value) || 1,
+      width:  parseFloat(document.getElementById('m-w').value) || 0.8,
+      depth:  parseFloat(document.getElementById('m-d').value) || 0.6,
+    } : { width:1.0, depth:1.0 }),
+  };
+  closeModal();
+  saveWaypoint(key);
+  selectedKey = key;
+  renderOverlay(); renderItemList(); renderEditForm();
+});
+
+// ── Waypoints CRUD ────────────────────────────────────────────────────────
+async function loadWaypoints() {
+  try { waypoints = await fetch('/api/waypoints').then(r=>r.json()); }
+  catch { waypoints = {}; }
+  renderItemList(); renderOverlay();
+}
+async function saveWaypoint(key) {
+  try {
+    const r = await fetch(`/api/waypoints/${encodeURIComponent(key)}`, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(waypoints[key]),
+    });
+    waypoints[key] = await r.json();
+  } catch(e) { console.error('save failed', e); }
+  renderOverlay(); renderItemList();
+}
+async function deleteWaypoint(key) {
+  try { await fetch(`/api/waypoints/${encodeURIComponent(key)}`, {method:'DELETE'}); }
+  catch {}
+  delete waypoints[key];
+  if (selectedKey === key) { selectedKey = null; document.getElementById('edit-form-wrap').innerHTML=''; }
+  renderOverlay(); renderItemList();
+}
+
+// ── Editor list & form ────────────────────────────────────────────────────
+function renderItemList() {
+  const list = document.getElementById('item-list');
+  list.innerHTML = '';
+  const entries = Object.entries(waypoints);
+  if (!entries.length) {
+    list.innerHTML = '<p class="no-items">No items yet. Switch to Edit tab and click the map.</p>';
+    return;
+  }
+  entries.forEach(([key, wp]) => {
+    const row = document.createElement('div');
+    row.className = 'item-row' + (selectedKey===key ? ' selected' : '');
+    row.innerHTML = `
+      <div class="item-color ${wp.type||'table'}"></div>
+      <span class="item-name">${wp.label||key}</span>
+      <button class="item-del" data-k="${key}" title="Delete">✕</button>`;
+    row.addEventListener('click', e => {
+      if (e.target.classList.contains('item-del')) return;
+      selectedKey = key; renderOverlay(); renderItemList(); renderEditForm();
+    });
+    row.querySelector('.item-del').addEventListener('click', () => deleteWaypoint(key));
+    list.appendChild(row);
+  });
+}
+
+function renderEditForm() {
+  const wrap = document.getElementById('edit-form-wrap');
+  if (!selectedKey || !waypoints[selectedKey]) { wrap.innerHTML=''; return; }
+  const wp = waypoints[selectedKey];
+  const isT = wp.type==='table' || !wp.type;
+  wrap.innerHTML = `
+    <div class="edit-form">
+      <div class="form-row"><span class="form-lbl">Name</span><input class="form-inp" id="ef-name" value="${wp.label||''}"></div>
+      ${isT ? `
+      <div class="form-row"><span class="form-lbl">Number</span><input class="form-inp" id="ef-num" type="number" value="${wp.number||1}" min="1" style="width:70px;flex:none"></div>
+      <div class="form-row"><span class="form-lbl">Width</span><input class="form-inp" id="ef-w" type="number" step="0.1" value="${wp.width||0.8}"><span style="font-size:.6rem;color:#334155">m</span></div>
+      <div class="form-row"><span class="form-lbl">Depth</span><input class="form-inp" id="ef-d" type="number" step="0.1" value="${wp.depth||0.6}"><span style="font-size:.6rem;color:#334155">m</span></div>
+      ` : ''}
+      <div class="btn-row">
+        <button class="btn btn-primary" id="ef-save">Save</button>
+        <button class="btn btn-danger"  id="ef-del">Delete</button>
+      </div>
+    </div>`;
+  document.getElementById('ef-save').addEventListener('click', () => {
+    wp.label = document.getElementById('ef-name').value.trim() || wp.label;
+    if (isT) {
+      wp.number = parseInt(document.getElementById('ef-num').value) || wp.number;
+      wp.width  = parseFloat(document.getElementById('ef-w').value)  || wp.width;
+      wp.depth  = parseFloat(document.getElementById('ef-d').value)  || wp.depth;
+    }
+    saveWaypoint(selectedKey); renderOverlay();
+  });
+  document.getElementById('ef-del').addEventListener('click', () => deleteWaypoint(selectedKey));
+}
+
+// ── Tab / tool switching ──────────────────────────────────────────────────
+function setTab(tab) {
+  activeTab = tab;
+  ['drive','edit'].forEach(t => {
+    document.getElementById('tab-'  +t).classList.toggle('active', t===tab);
+    document.getElementById('pane-'+t).classList.toggle('active', t===tab);
+  });
+  const area = document.getElementById('map-area');
+  const overlay = document.getElementById('overlay');
+  if (tab === 'edit') {
+    area.classList.add('edit-mode');
+    overlay.classList.add('edit-mode');
+    if (selectedKey) { renderEditForm(); }
+    renderItemList();
+  } else {
+    area.classList.remove('edit-mode');
+    overlay.classList.remove('edit-mode');
+    selectedKey = null;
+    renderOverlay();
+  }
+}
+
+function setTool(btn) {
+  document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  editTool = btn.dataset.tool;
+  selectedKey = null;
+  renderOverlay(); renderItemList();
+  document.getElementById('edit-form-wrap').innerHTML = '';
+  const hints = {
+    table:    'Click on the map to place a table.',
+    obstacle: 'Click on the map to add a no-go zone.',
+    origin:   'Click on the map to set the robot\'s home position.',
+  };
+  document.getElementById('edit-hint').textContent = hints[editTool];
+}
+
+// ── Drive ─────────────────────────────────────────────────────────────────
 function publishDrive() {
   if (!cmdVel) return;
-  const lin = (held.fwd  ? 1 : 0) - (held.back  ? 1 : 0);
-  const ang = (held.left ? 1 : 0) - (held.right ? 1 : 0);
+  const lin = (held.fwd?1:0)-(held.back?1:0);
+  const ang = (held.left?1:0)-(held.right?1:0);
   cmdVel.publish(new ROSLIB.Message({
-    linear:  { x: lin * linSpeed, y:0, z:0 },
-    angular: { x:0, y:0, z: ang * angSpeed },
+    linear:{x:lin*linSpeed,y:0,z:0}, angular:{x:0,y:0,z:ang*angSpeed},
   }));
 }
 function sendStop() {
-  if (!cmdVel) return;
-  cmdVel.publish(new ROSLIB.Message({ linear:{x:0,y:0,z:0}, angular:{x:0,y:0,z:0} }));
+  if (cmdVel) cmdVel.publish(new ROSLIB.Message({linear:{x:0,y:0,z:0},angular:{x:0,y:0,z:0}}));
 }
-function clamp(v,lo,hi) { return Math.max(lo,Math.min(hi,v)); }
-function setLin(v) { linSpeed = clamp(v, LIN_MIN, LIN_MAX); document.getElementById('lin-val').textContent = linSpeed.toFixed(2); }
-function setAng(v) { angSpeed = clamp(v, ANG_MIN, ANG_MAX); document.getElementById('ang-val').textContent = angSpeed.toFixed(2); }
-
-function emergencyStop() {
-  Object.keys(held).forEach(k => held[k] = false);
-  document.querySelectorAll('.dk').forEach(b => b.classList.remove('pressed'));
+function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
+function setLin(v){linSpeed=clamp(v,LIN_MIN,LIN_MAX);document.getElementById('lin-val').textContent=linSpeed.toFixed(2);}
+function setAng(v){angSpeed=clamp(v,ANG_MIN,ANG_MAX);document.getElementById('ang-val').textContent=angSpeed.toFixed(2);}
+function emergencyStop(){
+  Object.keys(held).forEach(k=>held[k]=false);
+  document.querySelectorAll('.dk').forEach(b=>b.classList.remove('pressed'));
   sendStop();
-  const btn = document.getElementById('estop-btn');
-  btn.classList.add('fired');
-  setTimeout(() => btn.classList.remove('fired'), 300);
+  const b=document.getElementById('estop-btn'); b.classList.add('fired'); setTimeout(()=>b.classList.remove('fired'),300);
 }
 
-// D-pad buttons
-const DPAD = {
-  'dk-fwd':   'fwd',
-  'dk-back':  'back',
-  'dk-left':  'left',
-  'dk-right': 'right',
-};
-Object.entries(DPAD).forEach(([id, dir]) => {
-  const btn = document.getElementById(id);
-  const press   = e => { e.preventDefault(); held[dir] = true;  btn.classList.add('pressed'); };
-  const release = e => { e.preventDefault(); held[dir] = false; btn.classList.remove('pressed'); };
-  btn.addEventListener('pointerdown',   press);
-  btn.addEventListener('pointerup',     release);
-  btn.addEventListener('pointerleave',  release);
-  btn.addEventListener('pointercancel', release);
+const DPAD_MAP={'dk-fwd':'fwd','dk-back':'back','dk-left':'left','dk-right':'right'};
+Object.entries(DPAD_MAP).forEach(([id,dir])=>{
+  const btn=document.getElementById(id);
+  const press=e=>{e.preventDefault();held[dir]=true; btn.classList.add('pressed');};
+  const rel  =e=>{e.preventDefault();held[dir]=false;btn.classList.remove('pressed');};
+  btn.addEventListener('pointerdown',press); btn.addEventListener('pointerup',rel);
+  btn.addEventListener('pointerleave',rel);  btn.addEventListener('pointercancel',rel);
 });
-document.getElementById('dk-stop').addEventListener('pointerdown', e => { e.preventDefault(); emergencyStop(); });
-document.getElementById('estop-btn').addEventListener('click', emergencyStop);
+document.getElementById('dk-stop').addEventListener('pointerdown',e=>{e.preventDefault();emergencyStop();});
+document.getElementById('estop-btn').addEventListener('click',emergencyStop);
+document.getElementById('lin-inc').addEventListener('click',()=>setLin(linSpeed*STEP));
+document.getElementById('lin-dec').addEventListener('click',()=>setLin(linSpeed/STEP));
+document.getElementById('ang-inc').addEventListener('click',()=>setAng(angSpeed*STEP));
+document.getElementById('ang-dec').addEventListener('click',()=>setAng(angSpeed/STEP));
 
-// Speed buttons
-document.getElementById('lin-inc').addEventListener('click', () => setLin(linSpeed * STEP));
-document.getElementById('lin-dec').addEventListener('click', () => setLin(linSpeed / STEP));
-document.getElementById('ang-inc').addEventListener('click', () => setAng(angSpeed * STEP));
-document.getElementById('ang-dec').addEventListener('click', () => setAng(angSpeed / STEP));
-
-// Keyboard
-const KEY_MAP = {
-  w:'fwd', ArrowUp:'fwd', s:'back', ArrowDown:'back',
-  a:'left', ArrowLeft:'left', d:'right', ArrowRight:'right',
-};
-document.addEventListener('keydown', e => {
-  if (e.repeat || document.activeElement?.tagName === 'INPUT') return;
-  if (e.key === ' ') { e.preventDefault(); emergencyStop(); return; }
-  if (e.key === 'q') { setLin(linSpeed*STEP); setAng(angSpeed*STEP); return; }
-  if (e.key === 'z') { setLin(linSpeed/STEP); setAng(angSpeed/STEP); return; }
-  if (e.key === '=') { setLin(linSpeed*STEP); return; }
-  if (e.key === '-') { setLin(linSpeed/STEP); return; }
-  if (e.key === 'e') { setAng(angSpeed*STEP); return; }
-  if (e.key === 'c') { setAng(angSpeed/STEP); return; }
-  const dir = KEY_MAP[e.key] || KEY_MAP[e.key.toLowerCase()];
-  if (dir) { e.preventDefault(); held[dir] = true; }
+const KEY_MAP={w:'fwd',ArrowUp:'fwd',s:'back',ArrowDown:'back',a:'left',ArrowLeft:'left',d:'right',ArrowRight:'right'};
+document.addEventListener('keydown',e=>{
+  if(e.repeat||document.activeElement?.tagName==='INPUT') return;
+  if(e.key===' '){e.preventDefault();emergencyStop();return;}
+  if(e.key==='q'){setLin(linSpeed*STEP);setAng(angSpeed*STEP);return;}
+  if(e.key==='z'){setLin(linSpeed/STEP);setAng(angSpeed/STEP);return;}
+  if(e.key==='='){setLin(linSpeed*STEP);return;}
+  if(e.key==='-'){setLin(linSpeed/STEP);return;}
+  if(e.key==='e'){setAng(angSpeed*STEP);return;}
+  if(e.key==='c'){setAng(angSpeed/STEP);return;}
+  const dir=KEY_MAP[e.key]||KEY_MAP[e.key.toLowerCase()];
+  if(dir){e.preventDefault();held[dir]=true;}
 });
-document.addEventListener('keyup', e => {
-  const dir = KEY_MAP[e.key] || KEY_MAP[e.key.toLowerCase()];
-  if (dir) held[dir] = false;
+document.addEventListener('keyup',e=>{
+  const dir=KEY_MAP[e.key]||KEY_MAP[e.key.toLowerCase()];
+  if(dir) held[dir]=false;
 });
-window.addEventListener('blur', () => { Object.keys(held).forEach(k => held[k]=false); sendStop(); });
+window.addEventListener('blur',()=>{Object.keys(held).forEach(k=>held[k]=false);sendStop();});
+window.addEventListener('resize',()=>{renderOverlay();updateRobot();});
 
+// ── Init ──────────────────────────────────────────────────────────────────
+loadWaypoints();
 connect();
 </script>
 </body>
