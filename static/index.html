@@ -2,184 +2,640 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Walter — Delivery</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Walter</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #0f1117;
-    color: #e2e8f0;
-    height: 100dvh;
-    display: flex;
-    flex-direction: column;
-  }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0f1117;
+  color: #e2e8f0;
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+}
 
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 20px;
-    background: #1a1d27;
-    border-bottom: 1px solid #2d3148;
-  }
+/* ── Sidebar nav ── */
+#nav {
+  width: 64px;
+  background: #0d0f18;
+  border-right: 1px solid #1a1d2e;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 0 14px;
+  flex-shrink: 0;
+  gap: 2px;
+}
+.nav-logo {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #3b82f6;
+  letter-spacing: -0.05em;
+  padding: 6px 0 14px;
+}
+.nav-btn {
+  width: 46px; height: 46px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: #334155;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  transition: background .15s, color .15s;
+  font-size: 0.45rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+.nav-btn svg { width: 20px; height: 20px; flex-shrink: 0; }
+.nav-btn:hover { background: #1a1d2e; color: #64748b; }
+.nav-btn.active { background: #1c2d47; color: #60a5fa; }
+#nav-gap { flex: 1; }
+#ros-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #1e2537;
+  margin-bottom: 4px;
+  transition: background .3s;
+}
+#ros-dot.ok  { background: #22c55e; }
+#ros-dot.err { background: #ef4444; }
 
-  header h1 { font-size: 1.2rem; font-weight: 600; letter-spacing: 0.05em; }
+/* ── Workspace ── */
+#workspace { flex: 1; display: flex; min-width: 0; min-height: 0; }
 
-  #status-dot {
-    width: 10px; height: 10px; border-radius: 50%;
-    background: #ef4444; transition: background 0.4s;
-  }
-  #status-dot.connected { background: #22c55e; }
+/* ── Map area ── */
+#map-area {
+  flex: 1;
+  position: relative;
+  background: #090b12;
+  overflow: hidden;
+  cursor: default;
+}
+#map-area.cursor-cross { cursor: crosshair; }
 
-  #status-label { font-size: 0.8rem; color: #94a3b8; margin-left: 8px; }
+#map-canvas, #scan-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  image-rendering: pixelated;
+}
+#scan-canvas { pointer-events: none; }
 
-  .main {
-    flex: 1;
-    display: grid;
-    grid-template-columns: 1fr 280px;
-    gap: 0;
-    min-height: 0;
-  }
+#overlay-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+}
 
-  /* ── Map ── */
-  #map-wrap {
-    position: relative;
-    background: #1a1d27;
-    overflow: hidden;
-  }
+#robot-marker {
+  position: absolute;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: 3px solid #fff;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  display: none;
+  z-index: 20;
+  box-shadow: 0 0 6px rgba(59,130,246,.6);
+}
 
-  canvas#map-canvas {
-    display: block;
-    width: 100%;
-    height: 100%;
-    image-rendering: pixelated;
-  }
+#map-placeholder {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 10px; color: #1e2537;
+  font-size: 0.78rem; font-family: monospace; letter-spacing: .08em;
+  pointer-events: none;
+}
+#map-placeholder.hidden { display: none; }
+#map-placeholder svg { width: 48px; height: 48px; opacity: .25; }
 
-  #robot-marker {
-    position: absolute;
-    width: 20px; height: 20px;
-    border-radius: 50%;
-    background: #3b82f6;
-    border: 3px solid #fff;
-    transform: translate(-50%, -50%);
-    transition: left 0.4s, top 0.4s;
-    pointer-events: none;
-    display: none;
-  }
+#map-info {
+  position: absolute;
+  bottom: 8px; left: 10px;
+  font-family: monospace; font-size: 0.62rem; color: #1e2537;
+  pointer-events: none; z-index: 5;
+}
 
-  /* Direction arrow on robot */
-  #robot-marker::after {
-    content: '';
-    position: absolute;
-    top: -8px; left: 50%;
-    transform: translateX(-50%);
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-bottom: 8px solid #fff;
-  }
+/* Map overlays */
+.map-dot {
+  position: absolute;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  cursor: pointer;
+  transition: transform .1s, box-shadow .1s;
+  pointer-events: auto;
+  z-index: 10;
+}
+.map-dot:hover { transform: translate(-50%,-50%) scale(1.4); }
+.map-dot.table  { width:14px; height:14px; background:#f59e0b; border:2px solid rgba(255,255,255,.5); }
+.map-dot.origin { width:16px; height:16px; background:#22c55e; border:2px solid rgba(255,255,255,.5); }
+.map-dot.active-delivery { background: #3b82f6; }
+.map-dot.selected { box-shadow: 0 0 0 3px #3b82f6, 0 0 8px rgba(59,130,246,.4); }
 
-  .table-dot {
-    position: absolute;
-    width: 14px; height: 14px;
-    border-radius: 50%;
-    background: #f59e0b;
-    border: 2px solid #fff;
-    transform: translate(-50%, -50%);
-    pointer-events: none;
-  }
+.map-label {
+  position: absolute;
+  transform: translate(-50%, 9px);
+  font-size: 0.6rem; font-weight: 700;
+  color: rgba(255,255,255,.8);
+  text-shadow: 0 1px 3px #000;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 11;
+}
 
-  .table-dot.target {
-    background: #22c55e;
-    box-shadow: 0 0 0 4px rgba(34,197,94,0.35);
-  }
+.table-rect {
+  position: absolute;
+  border: 1.5px solid rgba(245,158,11,.5);
+  background: rgba(245,158,11,.06);
+  pointer-events: none;
+  transform-origin: center center;
+  z-index: 9;
+}
+.table-rect.selected { border-color: rgba(59,130,246,.7); background: rgba(59,130,246,.08); }
 
-  /* ── Sidebar ── */
-  #sidebar {
-    display: flex;
-    flex-direction: column;
-    background: #1a1d27;
-    border-left: 1px solid #2d3148;
-    padding: 16px;
-    gap: 12px;
-    overflow-y: auto;
-  }
+.obstacle-rect {
+  position: absolute;
+  border: 2px solid rgba(239,68,68,.6);
+  background: rgba(239,68,68,.08);
+  cursor: pointer;
+  transform-origin: center center;
+  pointer-events: auto;
+  z-index: 9;
+}
+.obstacle-rect:hover { border-color: rgba(239,68,68,.9); }
+.obstacle-rect.selected { border-color: #3b82f6; background: rgba(59,130,246,.1); }
+.obstacle-label {
+  position: absolute; top: 3px; left: 5px;
+  font-size: 0.58rem; font-weight: 700;
+  color: rgba(239,68,68,.8); pointer-events: none; white-space: nowrap;
+}
 
-  #sidebar h2 { font-size: 0.85rem; text-transform: uppercase;
-    letter-spacing: 0.08em; color: #64748b; margin-bottom: 4px; }
+/* ── Right panel ── */
+#right-panel {
+  width: 272px;
+  background: #0d0f18;
+  border-left: 1px solid #1a1d2e;
+  display: flex; flex-direction: column;
+  flex-shrink: 0; overflow: hidden;
+}
+.panel-section { display: none; flex-direction: column; flex: 1; min-height: 0; }
+.panel-section.visible { display: flex; }
+.panel-head {
+  padding: 13px 14px 10px;
+  font-size: 0.65rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .14em; color: #334155;
+  border-bottom: 1px solid #1a1d2e; flex-shrink: 0;
+}
+.panel-body {
+  padding: 10px;
+  display: flex; flex-direction: column; gap: 8px;
+  flex: 1; min-height: 0; overflow-y: auto;
+}
 
-  .table-btn {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 16px;
-    border-radius: 10px;
-    background: #252836;
-    border: 2px solid transparent;
-    cursor: pointer;
-    font-size: 1rem;
-    font-weight: 600;
-    color: #e2e8f0;
-    transition: background 0.15s, border-color 0.15s;
-    -webkit-tap-highlight-color: transparent;
-  }
+/* ── Shared UI ── */
+.btn {
+  padding: 7px 12px; border-radius: 6px;
+  border: 1px solid #1a1d2e; cursor: pointer;
+  font-size: 0.75rem; font-weight: 600;
+  background: #13151f; color: #64748b;
+  transition: background .12s, color .12s, border-color .12s;
+  text-align: center;
+}
+.btn:hover { background: #1a1d2e; color: #e2e8f0; }
+.btn.active { border-color: #3b82f6; color: #60a5fa; background: #1c2d47; }
+.btn-primary { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+.btn-primary:hover { background: #1c3566; }
+.btn-danger  { background: #140606; border-color: #3f1515; color: #ef4444; }
+.btn-danger:hover  { background: #2d0f0f; }
+.btn-success { background: #052e16; border-color: #166534; color: #4ade80; }
+.btn-success:hover { background: #0a3d1f; }
+.btn-full { width: 100%; }
+.btn-row { display: flex; gap: 6px; }
+.btn-row .btn { flex: 1; }
 
-  .table-btn:hover { background: #2d3148; }
-  .table-btn.selected { border-color: #3b82f6; background: #1e3a5f; }
-  .table-btn.delivering { border-color: #22c55e; background: #14532d; }
+.tool-group {
+  display: flex; border: 1px solid #1a1d2e;
+  border-radius: 6px; overflow: hidden; flex-shrink: 0;
+}
+.tool-btn {
+  flex: 1; padding: 8px 4px;
+  border: none; border-right: 1px solid #1a1d2e;
+  background: #13151f; color: #334155;
+  cursor: pointer; font-size: 0.63rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .08em;
+  transition: background .12s, color .12s;
+}
+.tool-btn:last-child { border-right: none; }
+.tool-btn.active { background: #1c2d47; color: #60a5fa; }
+.tool-btn:hover:not(.active) { background: #1a1d2e; color: #94a3b8; }
 
-  .table-btn .icon { font-size: 1.3rem; }
+.status-badge {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; background: #13151f;
+  border-radius: 8px; border: 1px solid #1a1d2e; flex-shrink: 0;
+}
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #1e2537; flex-shrink: 0; transition: background .3s;
+}
+.status-dot.idle    { background: #334155; }
+.status-dot.moving  { background: #f59e0b; }
+.status-dot.arrived { background: #22c55e; }
+.status-dot.error   { background: #ef4444; }
+.status-text { font-size: 0.8rem; color: #64748b; }
 
-  #send-btn {
-    margin-top: auto;
-    padding: 16px;
-    border-radius: 12px;
-    border: none;
-    background: #3b82f6;
-    color: #fff;
-    font-size: 1.1rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: background 0.15s, opacity 0.15s;
-  }
+.divider { border: none; border-top: 1px solid #1a1d2e; margin: 2px 0; flex-shrink: 0; }
+.hint { font-size: 0.7rem; color: #1e2537; line-height: 1.65; }
+.sect-label {
+  font-size: 0.6rem; text-transform: uppercase;
+  letter-spacing: .1em; color: #1e2537; font-weight: 700; flex-shrink: 0;
+}
 
-  #send-btn:disabled { opacity: 0.4; cursor: default; }
-  #send-btn:not(:disabled):hover { background: #2563eb; }
-  #send-btn.cancel { background: #ef4444; }
-  #send-btn.cancel:not(:disabled):hover { background: #dc2626; }
+/* Delivery table list */
+#delivery-table-list { display: flex; flex-direction: column; gap: 5px; overflow-y: auto; flex: 1; min-height: 0; }
+.tbl-item {
+  padding: 9px 12px; background: #13151f;
+  border-radius: 6px; border: 1px solid #1a1d2e;
+  cursor: pointer; display: flex; align-items: center; gap: 10px;
+  transition: border-color .12s, background .12s; flex-shrink: 0;
+}
+.tbl-item:hover { border-color: #253050; background: #161927; }
+.tbl-item.selected { border-color: #3b82f6; background: #1c2d47; }
+.tbl-num {
+  width: 28px; height: 28px; border-radius: 6px;
+  background: #1a1d2e; display: flex; align-items: center; justify-content: center;
+  font-size: 0.75rem; font-weight: 700; color: #475569; flex-shrink: 0;
+}
+.tbl-item.selected .tbl-num { background: #1c3566; color: #60a5fa; }
+.tbl-meta { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.tbl-name { font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tbl-dims { font-size: 0.62rem; color: #334155; font-family: monospace; }
 
-  #robot-state {
-    text-align: center;
-    font-size: 0.85rem;
-    color: #94a3b8;
-    min-height: 1.2em;
-  }
+/* Editor list */
+#editor-item-list { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; flex: 1; min-height: 0; }
+.ed-item {
+  padding: 7px 10px; background: #13151f;
+  border-radius: 6px; border: 1px solid #1a1d2e;
+  display: flex; align-items: center; gap: 8px;
+  cursor: pointer; flex-shrink: 0; transition: border-color .12s;
+}
+.ed-item:hover { border-color: #253050; }
+.ed-item.selected { border-color: #3b82f6; }
+.ed-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.ed-dot.table    { background: #f59e0b; }
+.ed-dot.origin   { background: #22c55e; }
+.ed-dot.obstacle { background: #ef4444; border-radius: 2px; }
+.ed-name { font-size: 0.78rem; flex: 1; }
+.ed-del {
+  width: 20px; height: 20px; border-radius: 4px;
+  border: none; background: transparent;
+  color: #1e2537; cursor: pointer; font-size: .85rem;
+  display: flex; align-items: center; justify-content: center;
+}
+.ed-del:hover { background: #2d0f0f; color: #ef4444; }
+
+/* Edit form */
+.edit-form {
+  padding: 10px; background: #13151f;
+  border-radius: 8px; border: 1px solid #1a1d2e;
+  display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;
+}
+.form-row { display: flex; align-items: center; gap: 8px; }
+.form-lbl {
+  font-size: 0.6rem; text-transform: uppercase; letter-spacing: .08em;
+  color: #334155; width: 50px; flex-shrink: 0; font-family: monospace;
+}
+.form-inp {
+  flex: 1; padding: 5px 8px; border-radius: 4px;
+  border: 1px solid #1a1d2e; background: #0d0f18;
+  color: #e2e8f0; font-size: 0.8rem;
+}
+.form-inp:focus { outline: none; border-color: #3b82f6; }
+
+/* D-pad */
+.dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 58px);
+  grid-template-rows: repeat(3, 58px);
+  gap: 4px; align-self: center; margin: 0 auto; flex-shrink: 0;
+}
+.dpad-btn {
+  background: #0d0f18; border: 1px solid #1a1d2e;
+  border-bottom: 3px solid #07080f; border-radius: 8px;
+  color: #1e2537; font-size: 1.1rem; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .07s, border-color .07s, color .07s, transform .07s;
+  touch-action: none; user-select: none; -webkit-tap-highlight-color: transparent;
+}
+.dpad-btn.pressed {
+  background: #1c2d47; border-color: #2563eb;
+  border-bottom-color: #1d4ed8; color: #93c5fd; transform: translateY(2px);
+}
+.dpad-stop {
+  border-color: #2d0f0f; background: #0b0505;
+  color: #3f1515; font-size: 0.6rem; font-weight: 700; letter-spacing: .05em;
+}
+.dpad-stop.pressed { background: #3a0f0f; border-color: #ef4444; color: #fca5a5; }
+
+/* Speed block */
+.speed-block { border: 1px solid #1a1d2e; border-radius: 8px; overflow: hidden; flex-shrink: 0; }
+.speed-row { display: flex; align-items: center; padding: 8px 10px; gap: 6px; border-bottom: 1px solid #1a1d2e; }
+.speed-row:last-of-type { border-bottom: none; }
+.spd-lbl { font-size: 0.6rem; text-transform: uppercase; letter-spacing: .1em; color: #334155; font-family: monospace; width: 46px; flex-shrink: 0; }
+.spd-val { font-family: monospace; font-size: 0.95rem; font-weight: 500; flex: 1; }
+.spd-unit { font-family: monospace; font-size: 0.58rem; color: #1e2537; }
+.spd-btns { display: flex; gap: 3px; }
+.spd-adj {
+  width: 22px; height: 22px; border-radius: 4px; border: 1px solid #1a1d2e;
+  background: #0d0f18; color: #334155; font-size: .8rem;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.spd-adj:hover { background: #1c2d47; color: #93c5fd; border-color: #2563eb; }
+.spd-hint { padding: 6px 10px; font-family: monospace; font-size: 0.58rem; color: #1a1d2e; letter-spacing: .04em; text-align: center; border-top: 1px solid #1a1d2e; }
+
+.estop-btn {
+  width: 100%; padding: 11px; border-radius: 6px; border: 1px solid #3f1515;
+  background: #0b0505; color: #ef4444; font-size: 0.7rem; font-weight: 700;
+  cursor: pointer; letter-spacing: .15em; text-transform: uppercase;
+  font-family: monospace; flex-shrink: 0;
+}
+.estop-btn:hover { background: #2d0f0f; }
+.estop-btn.fired { background: #450a0a; border-color: #ef4444; }
+
+/* Modal */
+#modal-backdrop {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.75);
+  align-items: center; justify-content: center; z-index: 300;
+}
+#modal-backdrop.open { display: flex; }
+#modal {
+  background: #13151f; border: 1px solid #253050;
+  border-radius: 12px; padding: 20px;
+  width: 290px; display: flex; flex-direction: column; gap: 12px;
+}
+#modal h3 { font-size: 0.9rem; font-weight: 700; }
+.modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.modal-btns { display: flex; gap: 8px; }
+.modal-btns .btn { flex: 1; padding: 10px; }
 </style>
 </head>
 <body>
 
-<header>
-  <h1>Walter — Delivery</h1>
-  <div style="display:flex;align-items:center">
-    <div id="status-dot"></div>
-    <span id="status-label">Connecting…</span>
-  </div>
-</header>
+<!-- ── Sidebar ── -->
+<nav id="nav">
+  <div class="nav-logo">W</div>
 
-<div class="main">
-  <div id="map-wrap">
+  <button class="nav-btn active" data-mode="mapping" title="Map Creation">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="3"/>
+      <circle cx="12" cy="12" r="7" stroke-dasharray="2 2"/>
+      <circle cx="12" cy="12" r="11"/>
+    </svg>
+    Map
+  </button>
+
+  <button class="nav-btn" data-mode="editor" title="Map Editor">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+    </svg>
+    Editor
+  </button>
+
+  <button class="nav-btn" data-mode="delivery" title="Delivery">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="10"/>
+      <polyline points="12 6 12 12 16 14"/>
+    </svg>
+    Deliver
+  </button>
+
+  <button class="nav-btn" data-mode="drive" title="Controller">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="12" y1="2" x2="12" y2="8"/><line x1="12" y1="16" x2="12" y2="22"/>
+      <line x1="2" y1="12" x2="8" y2="12"/><line x1="16" y1="12" x2="22" y2="12"/>
+      <circle cx="12" cy="12" r="3"/>
+    </svg>
+    Drive
+  </button>
+
+  <button class="nav-btn" data-mode="face" title="Face Screen">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="10"/>
+      <circle cx="9" cy="10" r="1.5" fill="currentColor" stroke="none"/>
+      <circle cx="15" cy="10" r="1.5" fill="currentColor" stroke="none"/>
+      <path d="M8 15s1.5 2 4 2 4-2 4-2"/>
+    </svg>
+    Face
+  </button>
+
+  <div id="nav-gap"></div>
+  <div id="ros-dot" title="Disconnected"></div>
+</nav>
+
+<!-- ── Workspace ── -->
+<div id="workspace">
+
+  <!-- Map canvas (shared across mapping / editor / delivery) -->
+  <div id="map-area">
     <canvas id="map-canvas"></canvas>
+    <canvas id="scan-canvas"></canvas>
+    <div id="overlay-layer"></div>
     <div id="robot-marker"></div>
+    <div id="map-placeholder">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <path d="M3 9h18M9 21V9"/>
+      </svg>
+      Waiting for map
+    </div>
+    <div id="map-info">No map</div>
   </div>
 
-  <div id="sidebar">
-    <h2>Select Table</h2>
-    <div id="table-list">
-      <p style="color:#64748b;font-size:0.85rem">Loading tables…</p>
+  <!-- Right panel -->
+  <div id="right-panel">
+
+    <!-- MAPPING -->
+    <div id="panel-mapping" class="panel-section visible">
+      <div class="panel-head">Map Creation</div>
+      <div class="panel-body">
+        <div class="btn-row">
+          <button class="btn" id="arc-toggle">Full scan</button>
+          <button class="btn" id="scan-toggle">Scan</button>
+          <button class="btn" id="scan-clear" style="display:none">Clear</button>
+        </div>
+        <hr class="divider">
+        <div class="dpad">
+          <div></div>
+          <button class="dpad-btn" id="dpad-fwd">↑</button>
+          <div></div>
+          <button class="dpad-btn" id="dpad-left">←</button>
+          <button class="dpad-btn dpad-stop" id="dpad-stop">stop</button>
+          <button class="dpad-btn" id="dpad-right">→</button>
+          <div></div>
+          <button class="dpad-btn" id="dpad-back">↓</button>
+          <div></div>
+        </div>
+        <div class="speed-block">
+          <div class="speed-row">
+            <span class="spd-lbl">Linear</span>
+            <span class="spd-val" id="lin-val">0.05</span>
+            <span class="spd-unit">m/s</span>
+            <div class="spd-btns">
+              <button class="spd-adj" id="lin-dec">−</button>
+              <button class="spd-adj" id="lin-inc">+</button>
+            </div>
+          </div>
+          <div class="speed-row">
+            <span class="spd-lbl">Angular</span>
+            <span class="spd-val" id="ang-val">0.50</span>
+            <span class="spd-unit">r/s</span>
+            <div class="spd-btns">
+              <button class="spd-adj" id="ang-dec">−</button>
+              <button class="spd-adj" id="ang-inc">+</button>
+            </div>
+          </div>
+          <div class="spd-hint">Q/Z both &nbsp;|&nbsp; =/- linear &nbsp;|&nbsp; E/C angular</div>
+        </div>
+        <button class="estop-btn" id="map-estop">Stop &nbsp;[space]</button>
+        <p class="hint">Drive around the room. Tap Scan to accumulate LiDAR points on the map.</p>
+      </div>
     </div>
-    <div id="robot-state"></div>
-    <button id="send-btn" disabled>Send Walter</button>
+
+    <!-- EDITOR -->
+    <div id="panel-editor" class="panel-section">
+      <div class="panel-head">Map Editor</div>
+      <div class="panel-body">
+        <div class="tool-group">
+          <button class="tool-btn active" data-tool="table">Tables</button>
+          <button class="tool-btn" data-tool="obstacle">Obstacles</button>
+          <button class="tool-btn" data-tool="origin">Origin</button>
+        </div>
+        <p class="hint" id="editor-hint">Click on the map to place a table.</p>
+        <div id="edit-form-wrap"></div>
+        <hr class="divider">
+        <span class="sect-label">Items on map</span>
+        <div id="editor-item-list"></div>
+      </div>
+    </div>
+
+    <!-- DELIVERY -->
+    <div id="panel-delivery" class="panel-section">
+      <div class="panel-head">Delivery</div>
+      <div class="panel-body">
+        <div class="status-badge">
+          <div class="status-dot idle" id="status-dot"></div>
+          <span class="status-text" id="status-text">Idle</span>
+        </div>
+        <span class="sect-label">Select table</span>
+        <div id="delivery-table-list"></div>
+        <hr class="divider">
+        <button class="btn btn-primary btn-full" id="send-btn" disabled>Send Walter</button>
+        <button class="btn btn-danger  btn-full" id="cancel-btn" style="display:none">Cancel</button>
+      </div>
+    </div>
+
+    <!-- DRIVE -->
+    <div id="panel-drive" class="panel-section">
+      <div class="panel-head">Controller</div>
+      <div class="panel-body">
+        <div class="dpad">
+          <div></div>
+          <button class="dpad-btn" id="drive-fwd">↑</button>
+          <div></div>
+          <button class="dpad-btn" id="drive-left">←</button>
+          <button class="dpad-btn dpad-stop" id="drive-stop">stop</button>
+          <button class="dpad-btn" id="drive-right">→</button>
+          <div></div>
+          <button class="dpad-btn" id="drive-back">↓</button>
+          <div></div>
+        </div>
+        <div class="speed-block">
+          <div class="speed-row">
+            <span class="spd-lbl">Linear</span>
+            <span class="spd-val" id="lin2-val">0.05</span>
+            <span class="spd-unit">m/s</span>
+            <div class="spd-btns">
+              <button class="spd-adj" id="lin2-dec">−</button>
+              <button class="spd-adj" id="lin2-inc">+</button>
+            </div>
+          </div>
+          <div class="speed-row">
+            <span class="spd-lbl">Angular</span>
+            <span class="spd-val" id="ang2-val">0.50</span>
+            <span class="spd-unit">r/s</span>
+            <div class="spd-btns">
+              <button class="spd-adj" id="ang2-dec">−</button>
+              <button class="spd-adj" id="ang2-inc">+</button>
+            </div>
+          </div>
+          <div class="spd-hint">Q/Z both &nbsp;|&nbsp; =/- linear &nbsp;|&nbsp; E/C angular</div>
+        </div>
+        <button class="estop-btn" id="drive-estop">Stop &nbsp;[space]</button>
+      </div>
+    </div>
+
+    <!-- FACE -->
+    <div id="panel-face" class="panel-section">
+      <div class="panel-head">Face Screen</div>
+      <div class="panel-body" style="align-items:center;justify-content:center;gap:16px">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#334155" stroke-width="1.5">
+          <circle cx="12" cy="12" r="10"/>
+          <circle cx="9" cy="10" r="1.5" fill="#334155" stroke="none"/>
+          <circle cx="15" cy="10" r="1.5" fill="#334155" stroke="none"/>
+          <path d="M8 15s1.5 2 4 2 4-2 4-2"/>
+        </svg>
+        <p style="font-size:.8rem;color:#334155;text-align:center;line-height:1.6">
+          Open the face screen on the robot's display.
+        </p>
+        <a href="/static/face.html" target="_blank" style="text-decoration:none;width:100%">
+          <button class="btn btn-primary btn-full">Open Face Screen</button>
+        </a>
+      </div>
+    </div>
+
+  </div><!-- /right-panel -->
+</div><!-- /workspace -->
+
+<!-- Add/edit item modal -->
+<div id="modal-backdrop">
+  <div id="modal">
+    <h3 id="modal-title">Add Table</h3>
+    <div class="form-row">
+      <span class="form-lbl">Name</span>
+      <input class="form-inp" id="m-name" type="text" placeholder="Table 1" maxlength="30" autocomplete="off">
+    </div>
+    <div id="m-table-extra">
+      <div class="modal-grid">
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <span class="form-lbl">Number</span>
+          <input class="form-inp" id="m-number" type="number" min="1" placeholder="1" style="width:100%">
+        </div>
+        <div></div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <span class="form-lbl">Width (m)</span>
+          <input class="form-inp" id="m-width" type="number" step="0.1" min="0.1" placeholder="0.8" style="width:100%">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <span class="form-lbl">Depth (m)</span>
+          <input class="form-inp" id="m-depth" type="number" step="0.1" min="0.1" placeholder="0.6" style="width:100%">
+        </div>
+      </div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn" id="modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="modal-ok">Save</button>
+    </div>
   </div>
 </div>
 

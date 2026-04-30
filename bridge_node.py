@@ -1,5 +1,6 @@
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from geometry_msgs.msg import Twist, TransformStamped
 from sensor_msgs.msg import Imu
 from nav_msgs.msg import Odometry
@@ -43,7 +44,15 @@ class WalterHardwareBridge(Node):
         self.init_imu()
 
         # --- ROS 2 COMMS ---
-        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.cmd_callback, 10)
+        # Explicit QoS: VOLATILE durability so we're compatible with both
+        # teleop_twist_keyboard and rosbridge/web UI publishers
+        _cmd_qos = QoSProfile(
+            depth=10,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+        )
+        self.cmd_sub = self.create_subscription(Twist, '/cmd_vel', self.cmd_callback, _cmd_qos)
         self.imu_pub = self.create_publisher(Imu, '/imu/data_raw', 10)
         self.odom_pub = self.create_publisher(Odometry, '/odom', 10)
         self.tf_broadcaster = TransformBroadcaster(self)

@@ -7,6 +7,8 @@ echo "⏳ Waiting for LiDAR to power up..."
 sleep 3
 
 echo "🐳 Starting Walter in Docker..."
+docker rm -f walter_dev 2>/dev/null && echo "  (removed stale container)" || true
+
 docker run -it --rm \
   --name walter_dev \
   --privileged \
