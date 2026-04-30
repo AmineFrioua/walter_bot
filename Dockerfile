@@ -30,7 +30,8 @@ RUN pip3 install --no-cache-dir \
     rich \
     psutil \
     smbus2 \
-    flask 
+    flask \
+    RPi.GPIO
 
 # 3. Setup Workspace
 WORKDIR /ros2_ws

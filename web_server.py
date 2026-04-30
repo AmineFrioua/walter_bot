@@ -49,12 +49,15 @@ def put_waypoint(name):
     if not body or 'x' not in body or 'y' not in body:
         return jsonify({'error': 'x and y required'}), 400
     waypoints = load_waypoints()
-    waypoints[name] = {
-        'x': float(body['x']),
-        'y': float(body['y']),
-        'theta': float(body.get('theta', 0.0)),
-        'label': body.get('label', name),
-    }
+    # Preserve all fields from the request body so extended schema
+    # (type, number, width, depth, etc.) round-trips correctly.
+    entry = {k: v for k, v in body.items()}
+    # Coerce mandatory numeric fields
+    entry['x'] = float(body['x'])
+    entry['y'] = float(body['y'])
+    entry['theta'] = float(body.get('theta', 0.0))
+    entry.setdefault('label', name)
+    waypoints[name] = entry
     save_waypoints(waypoints)
     return jsonify(waypoints[name])
 
@@ -77,8 +80,6 @@ def get_config():
 
 if __name__ == '__main__':
     print("Walter web server starting on http://0.0.0.0:5000")
-    print("   Delivery  : http://localhost:5000/")
-    print("   Admin     : http://localhost:5000/admin")
-    print("   Drive     : http://localhost:5000/static/drive.html")
+    print("   Main UI   : http://localhost:5000/")
     print("   Face      : http://localhost:5000/static/face.html")
     app.run(host='0.0.0.0', port=5000, debug=False)
