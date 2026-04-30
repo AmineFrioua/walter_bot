@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Walter — Editor</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0f1117; color: #e2e8f0;
+  height: 100dvh; display: flex; flex-direction: column; overflow: hidden;
+  user-select: none;
+}
+
+/* Header */
+header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; background: #0d0f18;
+  border-bottom: 1px solid #1a1d2e; flex-shrink: 0;
+}
+.back { text-decoration: none; color: #334155; font-size: .82rem; }
+.back:hover { color: #60a5fa; }
+.hdr-title { font-size: .88rem; font-weight: 700; flex: 1; }
+.conn { display: flex; align-items: center; gap: 5px; font-size: .68rem; font-family: monospace; color: #334155; }
+.conn-dot { width:7px; height:7px; border-radius:50%; background:#334155; flex-shrink:0; }
+.conn-dot.ok { background:#22c55e; }
+.conn-dot.err { background:#ef4444; }
+
+/* Layout */
+.workspace { flex: 1; display: flex; min-height: 0; }
+
+/* Map area */
+#map-area {
+  flex: 1; position: relative; background: #090b12;
+  overflow: hidden; min-width: 0; cursor: crosshair;
+}
+#map-canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  image-rendering: pixelated; pointer-events: none;
+}
+#overlay {
+  position: absolute; inset: 0; z-index: 3; pointer-events: auto;
+}
+#robot-dot {
+  position: absolute; width: 12px; height: 12px; border-radius: 50%;
+  background: #3b82f6; border: 2px solid #fff;
+  transform: translate(-50%,-50%); pointer-events: none;
+  display: none; z-index: 10; box-shadow: 0 0 6px rgba(59,130,246,.6);
+  opacity: .5;
+}
+#map-placeholder {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 8px;
+  color: #1e2537; font-size: .72rem; font-family: monospace;
+  pointer-events: none; z-index: 1;
+}
+#map-placeholder.hidden { display: none; }
+#map-info {
+  position: absolute; bottom: 8px; left: 10px;
+  font-family: monospace; font-size: .58rem; color: #1e2537;
+  pointer-events: none; z-index: 5;
+}
+#map-hint {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  background: rgba(13,15,24,.9); border: 1px solid #1a1d2e; border-radius: 6px;
+  padding: 5px 14px; font-size: .68rem; color: #475569;
+  pointer-events: none; z-index: 6; white-space: nowrap;
+}
+
+/* Waypoint overlays */
+.wp-dot {
+  position: absolute; border-radius: 50%; transform: translate(-50%,-50%);
+  pointer-events: auto; cursor: grab; z-index: 4;
+  transition: transform .1s, box-shadow .1s;
+}
+.wp-dot:active { cursor: grabbing; }
+.wp-dot:hover  { transform: translate(-50%,-50%) scale(1.4); }
+.wp-dot.table    { width: 14px; height: 14px; background: #f59e0b; border: 2px solid rgba(255,255,255,.6); }
+.wp-dot.origin   { width: 16px; height: 16px; background: #22c55e; border: 2px solid rgba(255,255,255,.6); }
+.wp-dot.obstacle { width: 12px; height: 12px; background: #ef4444; border: 2px solid rgba(255,255,255,.5); border-radius: 3px; }
+.wp-dot.selected { box-shadow: 0 0 0 3px #3b82f6, 0 0 10px rgba(59,130,246,.4); }
+.wp-label {
+  position: absolute; transform: translate(-50%, 8px);
+  font-size: .58rem; font-weight: 700;
+  color: rgba(255,255,255,.85); text-shadow: 0 1px 3px #000;
+  pointer-events: none; white-space: nowrap; z-index: 5;
+}
+.wp-rect-table {
+  position: absolute; border: 1.5px solid rgba(245,158,11,.5);
+  background: rgba(245,158,11,.07); pointer-events: none; z-index: 3;
+}
+.wp-rect-table.selected { border-color: rgba(59,130,246,.7); background: rgba(59,130,246,.09); }
+.wp-rect-obstacle {
+  position: absolute; border: 2px solid rgba(239,68,68,.55);
+  background: rgba(239,68,68,.07); pointer-events: none; z-index: 3;
+}
+.wp-rect-obstacle.selected { border-color: #3b82f6; }
+
+/* Right panel */
+#panel {
+  width: 252px; background: #0d0f18; border-left: 1px solid #1a1d2e;
+  display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden;
+}
+.sect { padding: 10px; border-bottom: 1px solid #1a1d2e; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+.sect-lbl { font-size: .58rem; text-transform: uppercase; letter-spacing: .1em; color: #1e2537; font-weight: 700; }
+
+/* Tool group */
+.tool-grp { display: flex; border: 1px solid #1a1d2e; border-radius: 6px; overflow: hidden; }
+.tool-btn {
+  flex: 1; padding: 8px 4px; border: none; border-right: 1px solid #1a1d2e;
+  background: #13151f; color: #334155; cursor: pointer;
+  font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
+  transition: background .12s, color .12s;
+}
+.tool-btn:last-child { border-right: none; }
+.tool-btn.active { background: #1c2d47; color: #60a5fa; }
+.tool-btn:hover:not(.active) { background: #1a1d2e; color: #94a3b8; }
+
+.hint { font-size: .65rem; color: #1e2537; line-height: 1.6; }
+
+/* Inline edit form */
+.edit-form {
+  background: #13151f; border-radius: 8px; border: 1px solid #1a1d2e;
+  display: flex; flex-direction: column; gap: 7px; flex-shrink: 0;
+  padding: 10px; margin: 0 10px 8px;
+}
+.form-row { display: flex; align-items: center; gap: 7px; }
+.form-lbl { font-size: .58rem; text-transform: uppercase; letter-spacing: .07em; color: #334155; width: 48px; flex-shrink: 0; font-family: monospace; }
+.form-inp { flex: 1; padding: 5px 8px; border-radius: 4px; border: 1px solid #1a1d2e; background: #0d0f18; color: #e2e8f0; font-size: .78rem; }
+.form-inp:focus { outline: none; border-color: #3b82f6; }
+
+/* Buttons */
+.btn {
+  padding: 6px 10px; border-radius: 6px; border: 1px solid #1a1d2e;
+  background: #13151f; color: #475569; font-size: .73rem; font-weight: 600;
+  cursor: pointer; transition: background .12s, color .12s; text-align: center;
+}
+.btn:hover { background: #1a1d2e; color: #e2e8f0; }
+.btn-primary { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+.btn-primary:hover { background: #1c3566; }
+.btn-danger  { background: #140606; border-color: #3f1515; color: #ef4444; }
+.btn-danger:hover  { background: #2d0f0f; }
+.btn-row { display: flex; gap: 5px; }
+.btn-row .btn { flex: 1; }
+
+/* Item list */
+.item-list { display: flex; flex-direction: column; gap: 4px; flex: 1; overflow-y: auto; min-height: 0; padding: 6px 10px; }
+.item-row {
+  display: flex; align-items: center; gap: 7px; padding: 6px 9px;
+  background: #13151f; border: 1px solid #1a1d2e; border-radius: 6px;
+  cursor: pointer; flex-shrink: 0; transition: border-color .1s;
+}
+.item-row:hover { border-color: #253050; }
+.item-row.selected { border-color: #3b82f6; }
+.item-color { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.item-color.table    { background: #f59e0b; }
+.item-color.origin   { background: #22c55e; }
+.item-color.obstacle { background: #ef4444; border-radius: 2px; }
+.item-name { flex: 1; font-size: .75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item-del { width: 18px; height: 18px; border-radius: 3px; border: none; background: transparent; color: #1e2537; cursor: pointer; font-size: .8rem; display: flex; align-items: center; justify-content: center; }
+.item-del:hover { background: #2d0f0f; color: #ef4444; }
+.no-items { font-size: .7rem; color: #1e2537; padding: 4px 0; }
+
+/* Modal */
+#modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.75); align-items: center; justify-content: center; z-index: 100; }
+#modal-bg.open { display: flex; }
+#modal { background: #13151f; border: 1px solid #253050; border-radius: 12px; padding: 20px; width: 280px; display: flex; flex-direction: column; gap: 11px; }
+#modal h3 { font-size: .88rem; font-weight: 700; }
+.modal-btns { display: flex; gap: 7px; }
+.modal-btns .btn { flex: 1; padding: 9px; }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="back" href="/">←</a>
+  <span class="hdr-title">Map Editor</span>
+  <div class="conn">
+    <div class="conn-dot" id="conn-dot"></div>
+    <span id="conn-label">Connecting…</span>
+  </div>
+</header>
+
+<div class="workspace">
+
+  <!-- Map canvas -->
+  <div id="map-area">
+    <canvas id="map-canvas"></canvas>
+    <div id="overlay"></div>
+    <div id="robot-dot"></div>
+    <div id="map-placeholder">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".25">
+        <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
+      </svg>
+      <span>Waiting for map from ROS…</span>
+      <span style="font-size:.62rem;color:#1a1d2e">Works in both mapping and navigate modes</span>
+    </div>
+    <div id="map-info"></div>
+    <div id="map-hint">Select a tool, then click the map to place an item</div>
+  </div>
+
+  <!-- Right panel -->
+  <div id="panel">
+
+    <div class="sect">
+      <span class="sect-lbl">Tool</span>
+      <div class="tool-grp">
+        <button class="tool-btn active" data-tool="table"    onclick="setTool(this)">Table</button>
+        <button class="tool-btn"        data-tool="obstacle" onclick="setTool(this)">Zone</button>
+        <button class="tool-btn"        data-tool="origin"   onclick="setTool(this)">Origin</button>
+      </div>
+      <p class="hint" id="edit-hint">Click on the map to place a table.</p>
+    </div>
+
+    <div id="edit-form-wrap"></div>
+
+    <div class="sect" style="padding-bottom:4px;">
+      <span class="sect-lbl">Items on map</span>
+    </div>
+    <div class="item-list" id="item-list"></div>
+
+  </div>
+</div>
+
+<!-- Add / edit modal -->
+<div id="modal-bg">
+  <div id="modal">
+    <h3 id="modal-title">Add Table</h3>
+    <div class="form-row">
+      <span class="form-lbl">Name</span>
+      <input class="form-inp" id="m-name" type="text" placeholder="Table 1" maxlength="30" autocomplete="off">
+    </div>
+    <div id="m-table-extra">
+      <div class="form-row">
+        <span class="form-lbl">Number</span>
+        <input class="form-inp" id="m-num" type="number" min="1" placeholder="1" style="width:70px;flex:none">
+      </div>
+      <div class="form-row">
+        <span class="form-lbl">Width</span>
+        <input class="form-inp" id="m-w" type="number" step="0.1" min="0.1" placeholder="0.8">
+        <span style="font-size:.6rem;color:#334155">m</span>
+      </div>
+      <div class="form-row">
+        <span class="form-lbl">Depth</span>
+        <input class="form-inp" id="m-d" type="number" step="0.1" min="0.1" placeholder="0.6">
+        <span style="font-size:.6rem;color:#334155">m</span>
+      </div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn" id="m-cancel">Cancel</button>
+      <button class="btn btn-primary" id="m-ok">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
+<script>
+const ROSBRIDGE = `ws://${location.hostname}:9090`;
+
+let ros, mapMeta = null, robotPose = { x:0, y:0, theta:0 };
+let waypoints = {}, selectedKey = null, editTool = 'table';
+let drag = null, pendingClick = null;
+
+// ── ROS ───────────────────────────────────────────────────────────────────
+function connect() {
+  ros = new ROSLIB.Ros({ url: ROSBRIDGE });
+  ros.on('connection', () => {
+    setConn(true);
+    subscribeMap();
+    subscribeOdom();
+  });
+  ros.on('error',  () => setConn(false));
+  ros.on('close',  () => {
+    setConn(false);
+    setTimeout(connect, 3000);
+  });
+}
+function setConn(ok) {
+  document.getElementById('conn-dot').className  = 'conn-dot' + (ok ? ' ok' : ' err');
+  document.getElementById('conn-label').textContent = ok ? 'Connected' : 'Disconnected';
+}
+
+// ── Map ───────────────────────────────────────────────────────────────────
+function subscribeMap() {
+  // /map is published in both mapping (SLAM) and navigate (map_server) modes
+  const t = new ROSLIB.Topic({ ros, name:'/map', messageType:'nav_msgs/OccupancyGrid', throttle_rate:3000 });
+  t.subscribe(msg => {
+    mapMeta = msg.info;
+    drawMap(msg);
+    document.getElementById('map-placeholder').classList.add('hidden');
+    document.getElementById('map-info').textContent =
+      `${msg.info.width}×${msg.info.height}  ${msg.info.resolution.toFixed(3)} m/px`;
+  });
+}
+
+function drawMap(msg) {
+  const canvas = document.getElementById('map-canvas');
+  const { width, height, data } = msg;
+  canvas.width  = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  const img = ctx.createImageData(width, height);
+
+  for (let i = 0; i < data.length; i++) {
+    const v  = data[i];
+    const x  = i % width;
+    const y  = Math.floor(i / width);
+    const py = (height - 1 - y) * width + x;
+    if      (v === -1) { img.data[py*4]=55;  img.data[py*4+1]=58;  img.data[py*4+2]=78;  img.data[py*4+3]=255; }
+    else if (v ===  0) { img.data[py*4]=200; img.data[py*4+1]=205; img.data[py*4+2]=210; img.data[py*4+3]=255; }
+    else               { img.data[py*4]=25;  img.data[py*4+1]=28;  img.data[py*4+2]=40;  img.data[py*4+3]=255; }
+  }
+  // Highlight obstacle edges in blue
+  for (let i = 0; i < data.length; i++) {
+    if (data[i] < 50) continue;
+    const x = i % width, y = Math.floor(i / width);
+    if ([data[i-1], data[i+1], data[i-width], data[i+width]].some(v => v === 0)) {
+      const py = (height-1-y)*width+x;
+      img.data[py*4]=90; img.data[py*4+1]=130; img.data[py*4+2]=210; img.data[py*4+3]=255;
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
+  renderOverlay();
+  updateRobot();
+}
+
+// ── Odom (faint robot position for reference) ─────────────────────────────
+function subscribeOdom() {
+  new ROSLIB.Topic({ ros, name:'/odom', messageType:'nav_msgs/Odometry', throttle_rate:500 }).subscribe(msg => {
+    const p = msg.pose.pose.position;
+    const q = msg.pose.pose.orientation;
+    robotPose = { x:p.x, y:p.y, theta: 2*Math.atan2(q.z,q.w) };
+    updateRobot();
+  });
+}
+function updateRobot() {
+  if (!mapMeta) return;
+  const pos = worldToScreen(robotPose.x, robotPose.y);
+  if (!pos) return;
+  const el = document.getElementById('robot-dot');
+  el.style.left = pos.left+'px'; el.style.top = pos.top+'px'; el.style.display = 'block';
+}
+
+// ── Coordinates ───────────────────────────────────────────────────────────
+function worldToScreen(wx, wy) {
+  if (!mapMeta) return null;
+  const area = document.getElementById('map-area');
+  const sx = area.clientWidth  / mapMeta.width;
+  const sy = area.clientHeight / mapMeta.height;
+  const px = (wx - mapMeta.origin.position.x) / mapMeta.resolution;
+  const py = (wy - mapMeta.origin.position.y) / mapMeta.resolution;
+  return { left: px * sx, top: (mapMeta.height - py) * sy };
+}
+function screenToWorld(cx, cy) {
+  if (!mapMeta) return null;
+  const area = document.getElementById('map-area');
+  const sx = mapMeta.width  / area.clientWidth;
+  const sy = mapMeta.height / area.clientHeight;
+  return {
+    x: cx * sx * mapMeta.resolution + mapMeta.origin.position.x,
+    y: (mapMeta.height - cy * sy) * mapMeta.resolution + mapMeta.origin.position.y,
+  };
+}
+
+// ── Overlay ───────────────────────────────────────────────────────────────
+function renderOverlay() {
+  const layer = document.getElementById('overlay');
+  layer.innerHTML = '';
+  if (!mapMeta) return;
+  const area = document.getElementById('map-area');
+  const sx = area.clientWidth  / mapMeta.width;
+  const sy = area.clientHeight / mapMeta.height;
+
+  Object.entries(waypoints).forEach(([key, wp]) => {
+    const pos = worldToScreen(wp.x, wp.y);
+    if (!pos) return;
+    const isSel = selectedKey === key;
+
+    if (wp.type === 'table') {
+      const wPx = (wp.width||0.8)/mapMeta.resolution*sx;
+      const dPx = (wp.depth||0.6)/mapMeta.resolution*sy;
+      const r = document.createElement('div');
+      r.className = 'wp-rect-table'+(isSel?' selected':'');
+      r.style.cssText = `left:${pos.left-wPx/2}px;top:${pos.top-dPx/2}px;width:${wPx}px;height:${dPx}px`;
+      layer.appendChild(r);
+    }
+    if (wp.type === 'obstacle') {
+      const wPx = (wp.width||1.0)/mapMeta.resolution*sx;
+      const dPx = (wp.depth||1.0)/mapMeta.resolution*sy;
+      const r = document.createElement('div');
+      r.className = 'wp-rect-obstacle'+(isSel?' selected':'');
+      r.style.cssText = `left:${pos.left-wPx/2}px;top:${pos.top-dPx/2}px;width:${wPx}px;height:${dPx}px`;
+      layer.appendChild(r);
+    }
+
+    const dot = document.createElement('div');
+    dot.className = `wp-dot ${wp.type||'table'}`+(isSel?' selected':'');
+    dot.style.left = pos.left+'px'; dot.style.top = pos.top+'px';
+    dot.dataset.key = key;
+    dot.addEventListener('pointerdown', onDotDown);
+    layer.appendChild(dot);
+
+    const lbl = document.createElement('div');
+    lbl.className = 'wp-label';
+    lbl.style.left = pos.left+'px'; lbl.style.top = pos.top+'px';
+    lbl.textContent = wp.label || key;
+    layer.appendChild(lbl);
+  });
+}
+
+// ── Drag ─────────────────────────────────────────────────────────────────
+function onDotDown(e) {
+  e.preventDefault(); e.stopPropagation();
+  const key = e.currentTarget.dataset.key;
+  drag = { key, moved: false };
+  selectedKey = key;
+  e.currentTarget.setPointerCapture(e.pointerId);
+  renderOverlay(); renderForm(); renderList();
+}
+document.getElementById('overlay').addEventListener('pointermove', e => {
+  if (!drag) return;
+  drag.moved = true;
+  const rect = document.getElementById('map-area').getBoundingClientRect();
+  const pos = screenToWorld(e.clientX-rect.left, e.clientY-rect.top);
+  if (!pos || !waypoints[drag.key]) return;
+  waypoints[drag.key].x = pos.x; waypoints[drag.key].y = pos.y;
+  renderOverlay();
+});
+document.getElementById('overlay').addEventListener('pointerup', () => {
+  if (!drag) return;
+  if (drag.moved) saveWaypoint(drag.key);
+  drag = null;
+});
+
+// ── Map click (place new item) ────────────────────────────────────────────
+document.getElementById('map-area').addEventListener('click', e => {
+  if (!mapMeta || drag?.moved) return;
+  if (e.target.closest('.wp-dot')) return;
+  const rect = e.currentTarget.getBoundingClientRect();
+  const pos = screenToWorld(e.clientX-rect.left, e.clientY-rect.top);
+  if (!pos) return;
+  if (editTool === 'origin') {
+    waypoints['origin'] = { x:pos.x, y:pos.y, theta:0, label:'Origin', type:'origin' };
+    saveWaypoint('origin'); return;
+  }
+  pendingClick = pos;
+  openModal(editTool);
+});
+
+// ── Modal ─────────────────────────────────────────────────────────────────
+function openModal(type, editKey) {
+  document.getElementById('modal-title').textContent = editKey ? `Edit ${type}` : `Add ${type}`;
+  document.getElementById('m-table-extra').style.display = type === 'table' ? '' : 'none';
+  const wp = editKey ? waypoints[editKey] : null;
+  document.getElementById('m-name').value = wp?.label || '';
+  document.getElementById('m-num').value  = wp?.number || '';
+  document.getElementById('m-w').value    = wp?.width  || '0.8';
+  document.getElementById('m-d').value    = wp?.depth  || '0.6';
+  document.getElementById('m-name').placeholder = type === 'table' ? 'Table 1' : 'Zone name';
+  const mbg = document.getElementById('modal-bg');
+  mbg._editKey = editKey || null; mbg._editType = type;
+  mbg.classList.add('open');
+  setTimeout(() => document.getElementById('m-name').focus(), 50);
+}
+function closeModal() {
+  document.getElementById('modal-bg').classList.remove('open');
+  pendingClick = null;
+}
+document.getElementById('m-cancel').addEventListener('click', closeModal);
+document.getElementById('modal-bg').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal-bg')) closeModal();
+});
+document.getElementById('m-name').addEventListener('keydown', e => {
+  if (e.key === 'Enter')  document.getElementById('m-ok').click();
+  if (e.key === 'Escape') closeModal();
+});
+document.getElementById('m-ok').addEventListener('click', () => {
+  const name = document.getElementById('m-name').value.trim();
+  if (!name) return;
+  const mbg  = document.getElementById('modal-bg');
+  const type = mbg._editType, eKey = mbg._editKey;
+  const key  = eKey || (name.toLowerCase().replace(/\s+/g,'_')+'_'+Date.now().toString(36));
+  const pos  = eKey ? {x:waypoints[eKey].x,y:waypoints[eKey].y} : pendingClick||{x:0,y:0};
+  waypoints[key] = {
+    x:pos.x, y:pos.y, theta:0, label:name, type,
+    ...(type==='table' ? {
+      number: parseInt(document.getElementById('m-num').value)||1,
+      width:  parseFloat(document.getElementById('m-w').value)||0.8,
+      depth:  parseFloat(document.getElementById('m-d').value)||0.6,
+    } : { width:1.0, depth:1.0 }),
+  };
+  closeModal();
+  saveWaypoint(key);
+  selectedKey = key;
+  renderOverlay(); renderList(); renderForm();
+});
+
+// ── Waypoints CRUD ────────────────────────────────────────────────────────
+async function loadWaypoints() {
+  try { waypoints = await fetch('/api/waypoints').then(r=>r.json()); }
+  catch { waypoints = {}; }
+  renderList(); renderOverlay();
+}
+async function saveWaypoint(key) {
+  try {
+    const r = await fetch(`/api/waypoints/${encodeURIComponent(key)}`, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(waypoints[key]),
+    });
+    waypoints[key] = await r.json();
+  } catch(e) { console.error('save failed', e); }
+  renderOverlay(); renderList();
+}
+async function deleteWaypoint(key) {
+  try { await fetch(`/api/waypoints/${encodeURIComponent(key)}`,{method:'DELETE'}); }
+  catch {}
+  delete waypoints[key];
+  if (selectedKey === key) { selectedKey=null; document.getElementById('edit-form-wrap').innerHTML=''; }
+  renderOverlay(); renderList();
+}
+
+// ── Editor list & inline form ─────────────────────────────────────────────
+function renderList() {
+  const list = document.getElementById('item-list');
+  list.innerHTML = '';
+  const entries = Object.entries(waypoints);
+  if (!entries.length) {
+    list.innerHTML = '<p class="no-items">No items yet — click the map to place one.</p>';
+    return;
+  }
+  entries.forEach(([key, wp]) => {
+    const row = document.createElement('div');
+    row.className = 'item-row'+(selectedKey===key?' selected':'');
+    row.innerHTML = `
+      <div class="item-color ${wp.type||'table'}"></div>
+      <span class="item-name">${wp.label||key}</span>
+      <button class="item-del" data-k="${key}">✕</button>`;
+    row.addEventListener('click', e => {
+      if (e.target.classList.contains('item-del')) return;
+      selectedKey = key; renderOverlay(); renderList(); renderForm();
+    });
+    row.querySelector('.item-del').addEventListener('click', ()=>deleteWaypoint(key));
+    list.appendChild(row);
+  });
+}
+
+function renderForm() {
+  const wrap = document.getElementById('edit-form-wrap');
+  if (!selectedKey || !waypoints[selectedKey]) { wrap.innerHTML=''; return; }
+  const wp = waypoints[selectedKey];
+  const isT = wp.type==='table' || !wp.type;
+  wrap.innerHTML = `
+    <div class="edit-form">
+      <div class="form-row"><span class="form-lbl">Name</span><input class="form-inp" id="ef-name" value="${wp.label||''}"></div>
+      ${isT ? `
+      <div class="form-row"><span class="form-lbl">Number</span><input class="form-inp" id="ef-num" type="number" value="${wp.number||1}" min="1" style="width:70px;flex:none"></div>
+      <div class="form-row"><span class="form-lbl">Width</span><input class="form-inp" id="ef-w" type="number" step="0.1" value="${wp.width||0.8}"><span style="font-size:.6rem;color:#334155">m</span></div>
+      <div class="form-row"><span class="form-lbl">Depth</span><input class="form-inp" id="ef-d" type="number" step="0.1" value="${wp.depth||0.6}"><span style="font-size:.6rem;color:#334155">m</span></div>
+      ` : ''}
+      <div class="btn-row">
+        <button class="btn btn-primary" id="ef-save">Save</button>
+        <button class="btn btn-danger"  id="ef-del">Delete</button>
+      </div>
+    </div>`;
+  document.getElementById('ef-save').addEventListener('click', () => {
+    wp.label = document.getElementById('ef-name').value.trim()||wp.label;
+    if (isT) {
+      wp.number = parseInt(document.getElementById('ef-num').value)||wp.number;
+      wp.width  = parseFloat(document.getElementById('ef-w').value)||wp.width;
+      wp.depth  = parseFloat(document.getElementById('ef-d').value)||wp.depth;
+    }
+    saveWaypoint(selectedKey); renderOverlay();
+  });
+  document.getElementById('ef-del').addEventListener('click', ()=>deleteWaypoint(selectedKey));
+}
+
+// ── Tool switching ────────────────────────────────────────────────────────
+function setTool(btn) {
+  document.querySelectorAll('.tool-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  editTool = btn.dataset.tool;
+  selectedKey = null;
+  renderOverlay(); renderList();
+  document.getElementById('edit-form-wrap').innerHTML = '';
+  const hints = {
+    table:    'Click on the map to place a table.',
+    obstacle: 'Click on the map to add a no-go zone.',
+    origin:   'Click on the map to set the robot\'s home/charging position.',
+  };
+  document.getElementById('edit-hint').textContent = hints[editTool];
+  document.getElementById('map-hint').textContent  = hints[editTool];
+}
+
+window.addEventListener('resize', ()=>{ renderOverlay(); updateRobot(); });
+
+loadWaypoints();
+connect();
+</script>
+</body>
+</html>
