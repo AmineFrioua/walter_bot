@@ -74,6 +74,7 @@ graph TD
 | `slam_params.yaml` | Docker | SLAM Toolbox tuning (Pi-optimised) |
 | `config/nav2_params.yaml` | Docker | Nav2 stack config |
 | `web_server.py` | Pi host | Flask REST API + serves static UI on port 5000 |
+| `load_cell_test.py` | Pi host | SPI ADC test + calibration wizard for load cells |
 | `waypoints.json` | Pi host | Named table/zone coordinates (auto-created) |
 | `static/index.html` | Browser | Launcher — links to all tools |
 | `static/map.html` | Browser | Live map view + manual drive + edit during mapping |
@@ -224,6 +225,7 @@ docker exec -it walter_dev bash -c "
 | Motor controller | I2C | `0x55` |
 | LSM6DS IMU | I2C | `0x6A` |
 | LiDAR power | GPIO | Pin 17 |
+| Load cell ADC | SPI | CE0 (`/dev/spidev0.0`) — manual CS on GPIO 8 |
 
 ---
 

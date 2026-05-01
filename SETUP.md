@@ -202,7 +202,113 @@ Valid states: `idle`, `moving`, `turning`, `arrived`, `waiting`, `returning`, `e
 
 ---
 
-## Step 9 — Auto-start on boot (optional)
+## Step 9 — Load cell calibration
+
+Walter's motherboard routes load cell signals through a 24-bit SPI ADC before reaching the Pi. Use `load_cell_test.py` to verify the connection and calibrate.
+
+### Wiring (BCM pins)
+
+| Signal | GPIO | Direction |
+|---|---|---|
+| `/RESET` | 27 | Output |
+| `DRDY` | 22 | Input |
+| `/CS` | 8 | Output (manual) |
+| `MOSI/MISO/SCLK` | SPI0 CE0 | SPI hardware |
+
+Enable SPI on the Pi if not already done:
+```bash
+sudo raspi-config   # Interface Options → SPI → Enable
+```
+
+Install Python dependencies (Pi host):
+```bash
+pip3 install spidev RPi.GPIO
+```
+
+### Test the connection
+
+```bash
+# Quick sanity check — prints one decoded frame from all 6 channels after reset
+python3 load_cell_test.py --debug
+```
+
+Expected output when wired correctly:
+```
+  CH0:  +00012345  (  +0.0018 mV)
+  CH1:  -00003210  (  -0.0005 mV)   ← target
+  ...
+```
+
+If DRDY never asserts you'll see:
+```
+  ⚠  DRDY did not assert within 2 s after reset.
+     Possible causes:
+       - ADC not powered
+       - Wrong SPI mode (try spi.mode = 0b00)
+       ...
+```
+
+### Calibrate (tare + known weight)
+
+```bash
+python3 load_cell_test.py --calibrate
+```
+
+The wizard walks through two steps:
+1. **Tare** — remove all weight, press Enter, script reads 30 samples and computes the zero offset
+2. **Scale** — place a known weight (e.g. 1 kg), enter the value, script computes the scale factor
+
+Output:
+```
+  TARE_OFFSET_CODE = -12450
+  SCALE_FACTOR_KG  = 0.00000812
+```
+
+Copy these two values into the config block at the top of `load_cell_test.py` and into the `web_server.py` weight polling thread.
+
+### Live monitoring
+
+```bash
+python3 load_cell_test.py                 # single channel, rolling average
+python3 load_cell_test.py --channel 0     # read a different channel
+python3 load_cell_test.py --all           # show all 6 channels per line
+python3 load_cell_test.py --samples 500   # capture 500 samples then exit
+```
+
+### Integrate with web server
+
+Once calibrated, add a background polling thread to `web_server.py`:
+
+```python
+import threading, spidev, RPi.GPIO as GPIO
+
+TARE_OFFSET_CODE = -12450      # from calibration
+SCALE_FACTOR_KG  = 0.00000812
+
+_weight_kg = 0.0
+
+def _poll_weight():
+    global _weight_kg
+    # (set up GPIO / SPI exactly as in load_cell_test.py)
+    while True:
+        if wait_drdy():
+            frame = read_frame(spi)
+            code  = decode_24bit(frame[3], frame[4], frame[5])  # CH1
+            _weight_kg = (code - TARE_OFFSET_CODE) * SCALE_FACTOR_KG
+        time.sleep(0.1)
+
+threading.Thread(target=_poll_weight, daemon=True).start()
+
+@app.route('/api/weight')
+def get_weight():
+    return jsonify({'kg': round(_weight_kg, 4)})
+```
+
+The delivery UI can then poll `/api/weight` and trigger return-home automatically when the value drops below threshold (item collected).
+
+---
+
+## Step 10 — Auto-start on boot (optional)
 
 ### `run_walter.sh` on boot
 
