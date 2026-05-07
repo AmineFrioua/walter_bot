@@ -308,7 +308,98 @@ The delivery UI can then poll `/api/weight` and trigger return-home automaticall
 
 ---
 
-## Step 10 — Auto-start on boot (optional)
+## Step 10 — QR code readability testing
+
+Use `qr_test.py` to verify that QR code stickers on tables are actually scannable before deploying Walter. The script tries multiple image-processing strategies and reports exactly which ones were needed.
+
+### Install dependencies (Pi host)
+
+```bash
+sudo apt-get install libzbar0        # ZBar shared library
+pip3 install pyzbar opencv-python Pillow
+```
+
+### Basic scan
+
+```bash
+# Scan current directory for any image files
+python3 qr_test.py
+
+# Scan a specific folder
+python3 qr_test.py --dir /path/to/qr_images
+```
+
+Sample output:
+```
+══════════════════════════════════════════════════════════════════════
+  Walter — QR Code Readability Test
+  Scanning : /home/pi/qr_images
+  Found    : 6 images
+══════════════════════════════════════════════════════════════════════
+
+  [  1/6]  table_qr_1.jpg          ✅ IMMEDIATE         data='Table:1'
+  [  2/6]  table_qr_2.jpg          🔧 PROCESSING
+                                    transform : rotate 90°
+                                    decoder   : pyzbar
+                                    data      : 'Table:2'
+  [  3/6]  receipt_photo.png       🔧 PROCESSING
+                                    transform : grayscale + CLAHE + threshold
+                                    decoder   : cv2
+                                    data      : 'ORDER:42'
+  [  4/6]  blurry_sticker.jpg      🔧 PROCESSING
+                                    transform : upscale 3× + threshold
+                                    decoder   : pyzbar
+                                    data      : 'Table:7'
+  [  5/6]  torn_label.jpg          ❌ UNREADABLE        (no QR found after all strategies)
+  [  6/6]  logo.png                ❌ UNREADABLE
+
+──────────────────────────────────────────────────────────────────────
+  SUMMARY   total=6   ✅ immediate=1   🔧 with-processing=3   ❌ unreadable=2
+══════════════════════════════════════════════════════════════════════
+```
+
+### Debug mode — save annotated images
+
+```bash
+python3 qr_test.py --debug
+# Saves annotated copies to ./qr_debug/ showing the bounding box of each decoded QR
+```
+
+### JSON report
+
+```bash
+python3 qr_test.py --json report.json
+```
+
+The JSON output includes per-image status, which transforms were applied, and the decoded payload — useful for automated CI or batch validation of printed labels.
+
+### All flags
+
+```bash
+python3 qr_test.py --dir ./images  # scan a folder
+python3 qr_test.py --debug         # save annotated debug images to ./qr_debug/
+python3 qr_test.py --json out.json # write machine-readable JSON report
+python3 qr_test.py --quiet         # summary line only, no per-image output
+```
+
+### What the transforms cover
+
+| Strategy | What it fixes |
+|---|---|
+| Rotate 90 / 180 / 270° | QR printed or photographed at an angle |
+| Grayscale | Colour noise confusing the decoder |
+| Invert | White-on-black or dark-background QR codes |
+| CLAHE | Low-contrast, faded, or uneven-lighting images |
+| Threshold (Otsu) | Blurry or low-contrast prints |
+| Adaptive threshold | Shadows or uneven illumination across the QR |
+| Sharpen / denoise | Camera blur or JPEG compression artefacts |
+| Upscale 2× / 3× | Small QR in a large photo, or low-res scan |
+| Crop centre 50% / 25% | QR buried inside a larger image |
+| Combos | Any combination of the above |
+
+---
+
+## Step 11 — Auto-start on boot (optional)
 
 ### `run_walter.sh` on boot
 
