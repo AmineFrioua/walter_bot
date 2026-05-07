@@ -169,6 +169,14 @@ header {
 #modal h3 { font-size: .88rem; font-weight: 700; }
 .modal-btns { display: flex; gap: 7px; }
 .modal-btns .btn { flex: 1; padding: 9px; }
+@media (max-width: 640px) {
+  .workspace { flex-direction: column; }
+  #map-area  { height: 60dvh; flex: none; }
+  #panel     { width: 100%; max-height: 40dvh; overflow-y: auto;
+               border-left: none; border-top: 1px solid #1a1d2e; flex-shrink: 0; }
+  .tool-btn  { padding: 9px 4px; font-size: .6rem; }
+  #map-hint  { font-size: .62rem; padding: 4px 10px; }
+}
 </style>
 </head>
 <body>
