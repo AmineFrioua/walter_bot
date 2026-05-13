@@ -293,7 +293,7 @@ header {
         <span class="sect-lbl">Speed</span>
         <div class="spd-row">
           <span class="spd-lbl">Linear</span>
-          <span class="spd-val" id="lin-val">0.05</span>
+          <span class="spd-val" id="lin-val">0.03</span>
           <span class="spd-unit">m/s</span>
           <div class="spd-btns">
             <button class="spd-adj" id="lin-dec">−</button>
@@ -302,7 +302,7 @@ header {
         </div>
         <div class="spd-row">
           <span class="spd-lbl">Angular</span>
-          <span class="spd-val" id="ang-val">0.50</span>
+          <span class="spd-val" id="ang-val">0.05</span>
           <span class="spd-unit">r/s</span>
           <div class="spd-btns">
             <button class="spd-adj" id="ang-dec">−</button>
@@ -381,7 +381,7 @@ header {
 <script>
 // ── Config ────────────────────────────────────────────────────────────────
 const ROSBRIDGE   = `ws://${location.hostname}:9090`;
-const LIN_MAX=0.20, LIN_MIN=0.01, ANG_MAX=1.5, ANG_MIN=0.05, STEP=1.1;
+const LIN_MAX=0.20, LIN_MIN=0.01, ANG_MAX=1.5, ANG_MIN=0.01, STEP=1.1;
 const FRONT_ARC   = 0.26; // ±15° in radians — "frontal" detection cone
 
 // ── State ─────────────────────────────────────────────────────────────────
@@ -397,7 +397,7 @@ let activeTab = 'drive';
 let scanMode  = 'live';     // 'live' | 'accumulate' | 'off'
 let scanSub   = null;
 let pubLoop   = null;
-let linSpeed=0.05, angSpeed=0.50;
+let linSpeed=0.03, angSpeed=0.05;
 const held    = { fwd:false, back:false, left:false, right:false };
 
 // ── ROS ───────────────────────────────────────────────────────────────────

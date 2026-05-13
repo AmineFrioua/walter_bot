@@ -314,7 +314,7 @@
 
       <div class="speed-row">
         <span class="label">Linear</span>
-        <span class="speed-value" id="val-lin">0.05</span>
+        <span class="speed-value" id="val-lin">0.03</span>
         <span class="speed-unit">m/s</span>
         <div class="speed-btns">
           <button class="speed-adj" id="lin-dec" title="W key">−</button>
@@ -324,7 +324,7 @@
 
       <div class="speed-row">
         <span class="label">Angular</span>
-        <span class="speed-value" id="val-ang">0.50</span>
+        <span class="speed-value" id="val-ang">0.05</span>
         <span class="speed-unit">r/s</span>
         <div class="speed-btns">
           <button class="speed-adj" id="ang-dec" title="E key">−</button>
@@ -373,11 +373,11 @@ const ROSBRIDGE_URL = `ws://${location.hostname}:9090`;
 const LIN_MAX  = 0.10;
 const LIN_MIN  = 0.01;
 const ANG_MAX  = 1.00;
-const ANG_MIN  = 0.05;
+const ANG_MIN  = 0.01;
 const STEP     = 1.1;   // multiply/divide per increment (teleop_twist_keyboard style)
 
-let linSpeed = 0.05;
-let angSpeed = 0.50;
+let linSpeed = 0.03;
+let angSpeed = 0.05;
 
 // Direction keys held state
 const held = { forward: false, backward: false, left: false, right: false };
