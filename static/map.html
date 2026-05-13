@@ -974,7 +974,7 @@ document.getElementById('save-map-btn').addEventListener('click', async () => {
   btn.disabled = true;
   btn.textContent = 'Saving…';
   stat.style.color = '#334155';
-  stat.textContent = 'Running map_saver…';
+  stat.textContent = 'Saving map…';
   try {
     const res = await fetch('/api/save_map', {
       method: 'POST',
