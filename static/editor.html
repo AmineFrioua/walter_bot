@@ -184,6 +184,14 @@ header {
 <header>
   <a class="back" href="/">←</a>
   <span class="hdr-title">Map Editor</span>
+  <!-- Compact map source bar -->
+  <div style="display:flex;align-items:center;gap:6px;flex:1;justify-content:center;min-width:0">
+    <select id="map-select" style="padding:3px 6px;border-radius:4px;border:1px solid #1a1d2e;background:#13151f;color:#94a3b8;font-size:.68rem;max-width:120px">
+      <option value="">Loading…</option>
+    </select>
+    <button id="load-disk-btn" style="padding:3px 10px;border-radius:4px;border:1px solid #1a1d2e;background:#13151f;color:#475569;font-size:.68rem;cursor:pointer;white-space:nowrap">Load file</button>
+    <span id="map-src-lbl" style="font-size:.62rem;font-family:monospace;color:#334155;white-space:nowrap"></span>
+  </div>
   <div class="conn">
     <div class="conn-dot" id="conn-dot"></div>
     <span id="conn-label">Connecting…</span>
@@ -266,9 +274,51 @@ header {
 <script>
 const ROSBRIDGE = `ws://${location.hostname}:9090`;
 
+// Map name from URL param (set by map.html save-map button link)
+const _urlParams   = new URLSearchParams(location.search);
+const defaultMap   = _urlParams.get('map') || 'room_map';
+
 let ros, mapMeta = null, robotPose = { x:0, y:0, theta:0 };
 let waypoints = {}, selectedKey = null, editTool = 'table';
 let drag = null, pendingClick = null;
+let noMapTimer = null;   // fires if /map not received within timeout
+
+// ── Populate map selector from saved files ────────────────────────────────
+async function loadMapList() {
+  try {
+    const names = await fetch('/api/maps').then(r => r.json());
+    const sel   = document.getElementById('map-select');
+    sel.innerHTML = names.length
+      ? names.map(n => `<option value="${n}"${n===defaultMap?' selected':''}>${n}</option>`).join('')
+      : `<option value="${defaultMap}">${defaultMap}</option>`;
+  } catch {
+    document.getElementById('map-select').innerHTML =
+      `<option value="${defaultMap}">${defaultMap}</option>`;
+  }
+}
+
+// ── Load saved map directly from disk (no ROS needed) ─────────────────────
+async function loadMapFromDisk(name) {
+  clearTimeout(noMapTimer);
+  noMapTimer = null;
+  document.getElementById('map-src-lbl').textContent = 'loading…';
+  try {
+    const res = await fetch(`/api/maps/${encodeURIComponent(name)}/data`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const msg = await res.json();
+    if (msg.error) throw new Error(msg.error);
+    mapMeta = msg.info;
+    drawMap(msg);
+    document.getElementById('map-placeholder').classList.add('hidden');
+    document.getElementById('map-info').textContent =
+      `${msg.info.width}×${msg.info.height}  ${msg.info.resolution.toFixed(3)} m/px`;
+    document.getElementById('map-src-lbl').textContent = `💾 ${name}`;
+  } catch(e) {
+    document.getElementById('map-src-lbl').textContent = '✗ ' + e.message;
+    document.getElementById('map-placeholder').querySelector('span').textContent =
+      `Could not load map "${name}" — is it saved?`;
+  }
+}
 
 // ── ROS ───────────────────────────────────────────────────────────────────
 function connect() {
@@ -277,9 +327,20 @@ function connect() {
     setConn(true);
     subscribeMap();
     subscribeOdom();
+    // If no /map arrives within 8 s, fall back to saved file.
+    // This handles navigate mode (map_server latched publish may be missed)
+    // and the case where ROS/SLAM hasn't fully started yet.
+    clearTimeout(noMapTimer);
+    if (!mapMeta) {
+      noMapTimer = setTimeout(() => {
+        const name = document.getElementById('map-select').value || defaultMap;
+        loadMapFromDisk(name);
+      }, 8000);
+    }
   });
   ros.on('error',  () => setConn(false));
   ros.on('close',  () => {
+    clearTimeout(noMapTimer);
     setConn(false);
     setTimeout(connect, 3000);
   });
@@ -291,14 +352,34 @@ function setConn(ok) {
 
 // ── Map ───────────────────────────────────────────────────────────────────
 function subscribeMap() {
-  // /map is published in both mapping (SLAM) and navigate (map_server) modes
-  const t = new ROSLIB.Topic({ ros, name:'/map', messageType:'nav_msgs/OccupancyGrid', throttle_rate:3000 });
-  t.subscribe(msg => {
+  // Subscribe with transient_local durability so we receive map_server's
+  // latched /map in navigate mode.  Standard ROSLIB.Topic uses volatile
+  // durability which misses the single publish from map_server on startup.
+  // rosbridge_server for ROS 2 Humble supports QoS in the subscribe message.
+  ros.socket.send(JSON.stringify({
+    op:           'subscribe',
+    id:           'map_sub_tl',
+    topic:        '/map',
+    type:         'nav_msgs/OccupancyGrid',
+    throttle_rate: 3000,
+    qos: {
+      depth:       1,
+      durability:  'transient_local',
+      history:     'keep_last',
+      reliability: 'reliable',
+    },
+  }));
+
+  // ROSLIB.Ros emits the topic name as event for every incoming publish msg
+  ros.on('/map', msg => {
+    clearTimeout(noMapTimer);
+    noMapTimer = null;
     mapMeta = msg.info;
     drawMap(msg);
     document.getElementById('map-placeholder').classList.add('hidden');
     document.getElementById('map-info').textContent =
       `${msg.info.width}×${msg.info.height}  ${msg.info.resolution.toFixed(3)} m/px`;
+    document.getElementById('map-src-lbl').textContent = '📡 ROS live';
   });
 }
 
@@ -603,6 +684,13 @@ function setTool(btn) {
 
 window.addEventListener('resize', ()=>{ renderOverlay(); updateRobot(); });
 
+// "Load file" button — immediately load selected map from disk
+document.getElementById('load-disk-btn').addEventListener('click', () => {
+  const name = document.getElementById('map-select').value || defaultMap;
+  loadMapFromDisk(name);
+});
+
+loadMapList();
 loadWaypoints();
 connect();
 </script>
