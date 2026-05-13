@@ -564,33 +564,133 @@ function toLogical(ax, ay) {
 })();
 
 // ── Debug logging ─────────────────────────────────────────────────────────
-const DBG_MAX = 40;
-let debugLines   = [];
-let debugVisible = false;
-let scanFrameCount = 0;   // counts scan messages for throttled stats update
+const DBG_MAX     = 60;
+let debugLines    = [];
+let debugVisible  = false;
+let logCategories = { sys: true, scan: false, odom: false, imu: false };
+let imuSub        = null;
+let connStart     = null;   // Date of last successful ROS connect
+let scanFrameCount = 0;     // throttles scan-log heartbeat
 
-function dbg(msg, level = 'info') {
-  const now  = new Date();
-  const ts   = now.toLocaleTimeString('en-US', { hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' })
-             + '.' + String(now.getMilliseconds()).padStart(3,'0');
-  debugLines.push({ ts, msg, level });
+// Core log function.  cat: 'sys' | 'scan' | 'odom' | 'imu'
+function dbg(msg, level = 'info', cat = 'sys') {
+  const now = new Date();
+  const ts  = now.toLocaleTimeString('en-US', {
+                hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' })
+            + '.' + String(now.getMilliseconds()).padStart(3, '0');
+  debugLines.push({ ts, msg, level, cat });
   if (debugLines.length > DBG_MAX) debugLines.shift();
   const fn = level === 'warn'  ? console.warn
            : level === 'error' ? console.error
            : level === 'ok'    ? console.info
            :                     console.log;
-  fn(`[Walter ${ts}] ${msg}`);
+  fn(`[Walter ${ts}][${cat.toUpperCase()}] ${msg}`);
   if (debugVisible) _renderDbgPanel();
 }
 
+// Format connected uptime
+function _uptimeStr() {
+  if (!connStart) return '—';
+  const s  = Math.floor((Date.now() - connStart) / 1000);
+  const mm = Math.floor(s / 60), ss = s % 60;
+  const hh = Math.floor(mm / 60);
+  return hh > 0
+    ? `${hh}h${String(mm % 60).padStart(2, '0')}m`
+    : `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+}
+
+// Rebuild the whole debug panel (status bar + category toggles + log)
 function _renderDbgPanel() {
   const panel = document.getElementById('debug-panel');
-  if (!panel) return;
-  const colors = { info:'#94a3b8', warn:'#f59e0b', error:'#ef4444', ok:'#22c55e' };
-  panel.innerHTML = debugLines.slice().reverse().map(e => {
-    const c = colors[e.level] || colors.info;
-    return `<div style="color:${c}">[${e.ts}] ${e.msg}</div>`;
+  if (!panel || !debugVisible) return;
+
+  // ── Sticky status bar ────────────────────────────────────────────────────
+  const isConn  = document.getElementById('conn-dot')?.classList.contains('ok') ?? false;
+  const cCol    = isConn ? '#22c55e' : '#ef4444';
+  const cTxt    = isConn ? 'Connected' : 'Disconnected';
+  const mapTxt  = mapMeta
+    ? `${mapMeta.width}×${mapMeta.height} res=${mapMeta.resolution.toFixed(3)}`
+    : 'no map';
+  const pts     = Math.floor(accumPoints.length / 2);
+  const ptsTxt  = scanMode === 'accumulate' ? `pts=${pts.toLocaleString()}` : 'pts=—';
+  const upTxt   = `up=${_uptimeStr()}`;
+
+  // ── Category toggle buttons ───────────────────────────────────────────────
+  const catDefs = [
+    { key:'sys',  label:'SYS'  },
+    { key:'scan', label:'SCAN' },
+    { key:'odom', label:'ODOM' },
+    { key:'imu',  label:'IMU'  },
+  ];
+  const catBtns = catDefs.map(({ key, label }) => {
+    const on   = logCategories[key];
+    const col  = on ? '#60a5fa' : '#475569';
+    const bg   = on ? 'rgba(59,130,246,.15)' : 'transparent';
+    const bord = on ? '#3b82f6' : '#1a1d2e';
+    return `<button onclick="toggleDbgCat('${key}')" style="`
+         + `padding:2px 8px;border-radius:4px;border:1px solid ${bord};`
+         + `background:${bg};color:${col};font-size:.52rem;font-weight:700;`
+         + `cursor:pointer;font-family:monospace;letter-spacing:.04em">${label}</button>`;
   }).join('');
+
+  // ── Log rows (newest first, filtered by active categories) ────────────────
+  const colors = { info:'#94a3b8', warn:'#f59e0b', error:'#ef4444', ok:'#22c55e' };
+  const rows = debugLines
+    .filter(e => logCategories[e.cat] !== false)
+    .slice().reverse()
+    .map(e => {
+      const c   = colors[e.level] || colors.info;
+      const tag = e.cat !== 'sys'
+        ? `<span style="color:#334155;font-size:.5rem">[${e.cat}] </span>`
+        : '';
+      return `<div style="color:${c}">[${e.ts}] ${tag}${e.msg}</div>`;
+    }).join('') || '<div style="color:#1e2537">— no entries for selected categories —</div>';
+
+  panel.innerHTML = `
+    <div style="position:sticky;top:0;background:rgba(9,11,18,.97);
+                padding-bottom:5px;border-bottom:1px solid #1a1d2e;margin-bottom:4px">
+      <div style="font-family:monospace;font-size:.62rem;line-height:2;
+                  display:flex;flex-wrap:wrap;gap:0 10px">
+        <span style="color:${cCol};font-weight:700">● ${cTxt}</span>
+        <span style="color:#60a5fa">${mapTxt}</span>
+        <span style="color:#93c5fd">${ptsTxt}</span>
+        <span style="color:#334155">${upTxt}</span>
+      </div>
+      <div style="display:flex;gap:4px;align-items:center">
+        <span style="font-size:.5rem;color:#334155;margin-right:2px">logs:</span>
+        ${catBtns}
+      </div>
+    </div>
+    <div style="font-size:.57rem;line-height:1.75">${rows}</div>`;
+}
+
+// Expose toggleDbgCat to onclick handlers inside innerHTML
+window.toggleDbgCat = function(cat) {
+  logCategories[cat] = !logCategories[cat];
+  // Start/stop expensive subscriptions on demand
+  if (cat === 'imu') {
+    logCategories.imu ? _startImuLog() : _stopImuLog();
+  }
+  _renderDbgPanel();
+};
+
+// ── IMU log subscription (on demand) ──────────────────────────────────────
+function _startImuLog() {
+  if (!ros || imuSub) return;
+  dbg('IMU logging ON — subscribing /imu/data_raw', 'info', 'imu');
+  imuSub = new ROSLIB.Topic({
+    ros, name:'/imu/data_raw',
+    messageType:'sensor_msgs/Imu', throttle_rate:500,
+  });
+  imuSub.subscribe(msg => {
+    const gz = (msg.angular_velocity?.z ?? 0).toFixed(4);
+    const gy = (msg.angular_velocity?.y ?? 0).toFixed(4);
+    const gx = (msg.angular_velocity?.x ?? 0).toFixed(4);
+    dbg(`ang_vel: x=${gx}  y=${gy}  z=${gz} rad/s`, 'info', 'imu');
+  });
+}
+function _stopImuLog() {
+  if (imuSub) { imuSub.unsubscribe(); imuSub = null; }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -598,38 +698,45 @@ document.addEventListener('DOMContentLoaded', () => {
     debugVisible = !debugVisible;
     document.getElementById('debug-panel').classList.toggle('visible', debugVisible);
     document.getElementById('zoom-debug').style.color = debugVisible ? '#f59e0b' : '';
-    if (debugVisible) _renderDbgPanel();
+    _renderDbgPanel();
   });
+  // Refresh uptime ticker every 5 s when panel is open
+  setInterval(() => { if (debugVisible) _renderDbgPanel(); }, 5000);
 });
 
-// Update the map-info bar with live stats
+// Update map-info stats bar (bottom-left of the map canvas)
 function updateMapInfo() {
-  const pts    = accumPoints.length / 2;
+  const pts    = Math.floor(accumPoints.length / 2);
   const mapStr = mapMeta
     ? `${mapMeta.width}×${mapMeta.height}  ${mapMeta.resolution.toFixed(3)} m/px`
     : '—';
-  const modeStr = scanMode === 'live' ? ' ◉ live'
+  const modeStr = scanMode === 'live'       ? ' ◉ live'
                 : scanMode === 'accumulate' ? ` ◉ accum  ${pts.toLocaleString()} pts`
                 : ' ○ off';
   document.getElementById('map-info').textContent = mapStr + modeStr;
+  if (debugVisible) _renderDbgPanel();   // keep status bar in sync
 }
 
 // ── ROS ───────────────────────────────────────────────────────────────────
 function connect() {
   ros = new ROSLIB.Ros({ url: ROSBRIDGE });
   ros.on('connection', () => {
+    connStart = new Date();
     setConn(true);
     cmdVel = new ROSLIB.Topic({ ros, name:'/cmd_vel', messageType:'geometry_msgs/Twist' });
     if (!pubLoop) pubLoop = setInterval(publishDrive, 100);
     subscribeMap();
     subscribeOdom();
     applyScanMode();
+    if (logCategories.imu) _startImuLog();   // re-subscribe if IMU was on
   });
   ros.on('error',  () => setConn(false));
   ros.on('close',  () => {
+    connStart = null;
     setConn(false);
     clearInterval(pubLoop); pubLoop = null;
     stopScan();
+    _stopImuLog();   // imuSub references old ros object — must clean up
     setTimeout(connect, 3000);
   });
 }
@@ -724,11 +831,16 @@ function drawMap(msg) {
 // ── Odometry ──────────────────────────────────────────────────────────────
 function subscribeOdom() {
   const t = new ROSLIB.Topic({ ros, name:'/odom', messageType:'nav_msgs/Odometry', throttle_rate:100 });
+  let odomN = 0;
   t.subscribe(msg => {
     const p = msg.pose.pose.position;
     const q = msg.pose.pose.orientation;
     robotPose = { x:p.x, y:p.y, theta: 2*Math.atan2(q.z, q.w) };
     updateRobot();
+    // Optional verbose odom log — every 20th msg (~2 s) when ODOM category enabled
+    if (logCategories.odom && ++odomN % 20 === 0) {
+      dbg(`x=${p.x.toFixed(3)}  y=${p.y.toFixed(3)}  θ=${robotPose.theta.toFixed(3)} rad`, 'info', 'odom');
+    }
   });
 }
 function updateRobot() {
@@ -882,13 +994,15 @@ function applyScanMode() {
       document.getElementById('front-banner').style.display = 'none';
     }
 
-    // Update stats every 50 scan frames (~5 s in accumulate mode)
+    // Update stats bar every 50 scan frames (~5 s in accumulate mode)
     scanFrameCount++;
     if (scanFrameCount % 50 === 0) {
       updateMapInfo();
-      if (scanMode === 'accumulate') {
-        dbg(`scan heartbeat: pts=${accumPoints.length/2}  canvas=${canvas.width}×${canvas.height}  mapMeta=${mapMeta ? mapMeta.width+'×'+mapMeta.height : 'null'}`, 'info');
-      }
+      // Heartbeat logged only when SCAN category is enabled (noisy otherwise)
+      dbg(`heartbeat: pts=${Math.floor(accumPoints.length/2)}  `
+        + `canvas=${canvas.width}×${canvas.height}  `
+        + `map=${mapMeta ? mapMeta.width+'×'+mapMeta.height : 'null'}  `
+        + `mode=${scanMode}`, 'info', 'scan');
     }
   });
 }
