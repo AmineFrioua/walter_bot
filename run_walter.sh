@@ -35,6 +35,8 @@ echo "⚡ Powering LiDAR (GPIO 17)..."
 sudo pinctrl set 17 op dh
 
 echo "🌐 Starting web UI on http://0.0.0.0:5000 ..."
+# Kill any stale web server left over from a previous run
+pkill -f "web_server.py" 2>/dev/null && sleep 0.5 || true
 python3 "$SCRIPT_DIR/web_server.py" &
 WEB_PID=$!
 
