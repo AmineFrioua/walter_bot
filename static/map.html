@@ -571,6 +571,9 @@ let logCategories = { sys: true, scan: false, odom: false, imu: false };
 let imuSub        = null;
 let connStart     = null;   // Date of last successful ROS connect
 let scanFrameCount = 0;     // throttles scan-log heartbeat
+let scanMsgTotal  = 0;      // total /scan_filtered frames received this session
+let mapMsgTotal   = 0;      // total /map frames received this session
+let noDataTimer   = null;   // fires if no scan/map within 15 s of connect
 
 // Core log function.  cat: 'sys' | 'scan' | 'odom' | 'imu'
 function dbg(msg, level = 'info', cat = 'sys') {
@@ -614,6 +617,12 @@ function _renderDbgPanel() {
   const pts     = Math.floor(accumPoints.length / 2);
   const ptsTxt  = scanMode === 'accumulate' ? `pts=${pts.toLocaleString()}` : 'pts=—';
   const upTxt   = `up=${_uptimeStr()}`;
+  // Data-flow counters — quickly shows if topics are arriving at all
+  const scanCol = scanMsgTotal > 0 ? '#22c55e' : (isConn ? '#ef4444' : '#334155');
+  const mapCol  = mapMsgTotal  > 0 ? '#22c55e' : (isConn ? '#ef4444' : '#334155');
+  const flowTxt = `<span style="color:${scanCol}">scan:${scanMsgTotal}</span>`
+                + `<span style="color:#334155"> / </span>`
+                + `<span style="color:${mapCol}">map:${mapMsgTotal}</span>`;
 
   // ── Category toggle buttons ───────────────────────────────────────────────
   const catDefs = [
@@ -655,6 +664,7 @@ function _renderDbgPanel() {
         <span style="color:#60a5fa">${mapTxt}</span>
         <span style="color:#93c5fd">${ptsTxt}</span>
         <span style="color:#334155">${upTxt}</span>
+        ${flowTxt}
       </div>
       <div style="display:flex;gap:4px;align-items:center">
         <span style="font-size:.5rem;color:#334155;margin-right:2px">logs:</span>
@@ -722,6 +732,8 @@ function connect() {
   ros = new ROSLIB.Ros({ url: ROSBRIDGE });
   ros.on('connection', () => {
     connStart = new Date();
+    scanMsgTotal = 0;
+    mapMsgTotal  = 0;
     setConn(true);
     cmdVel = new ROSLIB.Topic({ ros, name:'/cmd_vel', messageType:'geometry_msgs/Twist' });
     if (!pubLoop) pubLoop = setInterval(publishDrive, 100);
@@ -729,10 +741,19 @@ function connect() {
     subscribeOdom();
     applyScanMode();
     if (logCategories.imu) _startImuLog();   // re-subscribe if IMU was on
+    // Warn if no data arrives within 15 s — likely QoS or node issue
+    clearTimeout(noDataTimer);
+    noDataTimer = setTimeout(() => {
+      if (scanMsgTotal === 0)
+        dbg('⚠ No /scan_filtered received in 15 s — is lidar_filter.py running?  Check QoS.', 'error');
+      if (mapMsgTotal === 0)
+        dbg('⚠ No /map received in 15 s — is SLAM Toolbox running?', 'error');
+    }, 15000);
   });
   ros.on('error',  () => setConn(false));
   ros.on('close',  () => {
     connStart = null;
+    clearTimeout(noDataTimer);
     setConn(false);
     clearInterval(pubLoop); pubLoop = null;
     stopScan();
@@ -757,12 +778,13 @@ function setConn(ok) {
 function subscribeMap() {
   const t = new ROSLIB.Topic({ ros, name:'/map', messageType:'nav_msgs/OccupancyGrid', throttle_rate:2000 });
   t.subscribe(msg => {
+    mapMsgTotal++;
     const prevMeta = mapMeta;
     mapMeta = msg.info;
     const ox = msg.info.origin.position.x.toFixed(2);
     const oy = msg.info.origin.position.y.toFixed(2);
     if (!prevMeta || prevMeta.width !== msg.info.width || prevMeta.height !== msg.info.height) {
-      dbg(`/map  ${msg.info.width}×${msg.info.height}  res=${msg.info.resolution.toFixed(4)}  origin=(${ox},${oy})${prevMeta ? '  ← GREW' : '  ← first'}`, 'warn');
+      dbg(`/map #${mapMsgTotal}  ${msg.info.width}×${msg.info.height}  res=${msg.info.resolution.toFixed(4)}  origin=(${ox},${oy})${prevMeta ? '  ← GREW' : '  ← first'}`, 'warn');
     }
     drawMap(msg);
     document.getElementById('map-placeholder').classList.add('hidden');
@@ -925,6 +947,7 @@ function applyScanMode() {
   const rate = scanMode === 'live' ? 100 : 350;
   scanSub = new ROSLIB.Topic({ ros, name:'/scan_filtered', messageType:'sensor_msgs/LaserScan', throttle_rate:rate });
   scanSub.subscribe(msg => {
+    scanMsgTotal++;
     syncScan();
     const canvas = document.getElementById('scan-canvas');
     const ctx    = canvas.getContext('2d');
