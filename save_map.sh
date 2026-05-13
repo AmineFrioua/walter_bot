@@ -16,7 +16,7 @@ mkdir -p "$MAP_DIR"
 
 echo "💾 Saving map as '$MAP_NAME'..."
 
-ros2 service call /slam_toolbox/save_map slam_toolbox/srv/SaveMap \
+timeout 5 ros2 service call /slam_toolbox/save_map slam_toolbox/srv/SaveMap \
     "{name: {data: '$OUT'}}" 2>/dev/null
 
 # Service exit code is unreliable — check the file itself
