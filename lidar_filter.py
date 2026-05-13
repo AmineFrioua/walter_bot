@@ -1,5 +1,6 @@
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 from rcl_interfaces.msg import SetParametersResult
 import math
@@ -25,12 +26,21 @@ class LidarFilter(Node):
             for deg in BLIND_SPOTS_DEG
         ]
 
-        self.sub = self.create_subscription(LaserScan, '/scan', self.scan_cb, 10)
-        self.pub = self.create_publisher(LaserScan, '/scan_filtered', 10)
+        # Use sensor_data QoS (BEST_EFFORT) to match:
+        #   • sllidar_ros2 publisher  → publishes /scan      with SensorDataQoS (BEST_EFFORT)
+        #   • slam_toolbox subscriber → subscribes /scan_filtered with sensor_data QoS (BEST_EFFORT)
+        # Using the default RELIABLE QoS causes a QoS incompatibility and zero data flows.
+        self.sub = self.create_subscription(
+            LaserScan, '/scan', self.scan_cb, qos_profile_sensor_data)
+        self.pub = self.create_publisher(
+            LaserScan, '/scan_filtered', qos_profile_sensor_data)
 
         spots = ', '.join([f'{d}°' for d in BLIND_SPOTS_DEG])
         self.get_logger().info(
             f'LiDAR filter active — {self._arc_label()}, blind spots: {spots} (±{MARGIN_DEG}°)'
+        )
+        self.get_logger().info(
+            'QoS: BEST_EFFORT (sensor_data) on /scan and /scan_filtered'
         )
 
     def _update_arc(self, deg):
