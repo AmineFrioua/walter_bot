@@ -35,12 +35,18 @@ class LidarFilter(Node):
         self.pub = self.create_publisher(
             LaserScan, '/scan_filtered', qos_profile_sensor_data)
 
+        self._recv_count = 0
+        self._last_log_ns = 0
+
         spots = ', '.join([f'{d}°' for d in BLIND_SPOTS_DEG])
         self.get_logger().info(
-            f'LiDAR filter active — {self._arc_label()}, blind spots: {spots} (±{MARGIN_DEG}°)'
+            f'LiDAR filter ready — {self._arc_label()}, blind spots: {spots} (±{MARGIN_DEG}°)'
         )
         self.get_logger().info(
-            'QoS: BEST_EFFORT (sensor_data) on /scan and /scan_filtered'
+            'QoS: BEST_EFFORT (sensor_data) on /scan subscriber and /scan_filtered publisher'
+        )
+        self.get_logger().info(
+            'Waiting for first /scan message…'
         )
 
     def _update_arc(self, deg):
@@ -58,6 +64,23 @@ class LidarFilter(Node):
         return SetParametersResult(successful=True)
 
     def scan_cb(self, msg):
+        self._recv_count += 1
+
+        # Log first scan so the terminal confirms data is flowing
+        if self._recv_count == 1:
+            self.get_logger().info(
+                f'✅ First /scan received ({len(msg.ranges)} rays, '
+                f'range {msg.range_min:.2f}–{msg.range_max:.2f} m) — forwarding to /scan_filtered'
+            )
+
+        # Heartbeat every 10 s so you can see the filter is alive
+        now_ns = self.get_clock().now().nanoseconds
+        if now_ns - self._last_log_ns > 10_000_000_000:
+            self._last_log_ns = now_ns
+            self.get_logger().info(
+                f'lidar_filter heartbeat — scans received: {self._recv_count}'
+            )
+
         ranges = list(msg.ranges)
         angle  = msg.angle_min
 
