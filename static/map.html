@@ -271,7 +271,8 @@ header {
       <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".25">
         <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
       </svg>
-      Waiting for SLAM map…
+      <span id="placeholder-msg">Connecting to ROS…</span>
+      <span id="placeholder-hint" style="font-size:.6rem;opacity:.5;margin-top:2px"></span>
     </div>
     <div id="map-info"></div>
     <div id="front-banner">Front: —</div>
@@ -569,8 +570,15 @@ function connect() {
   });
 }
 function setConn(ok) {
-  document.getElementById('conn-dot').className  = 'conn-dot' + (ok ? ' ok' : ' err');
+  document.getElementById('conn-dot').className   = 'conn-dot' + (ok ? ' ok' : ' err');
   document.getElementById('conn-label').textContent = ok ? 'Connected' : 'Disconnected';
+  // Update placeholder only while it's still visible (no map received yet)
+  if (!mapMeta) {
+    document.getElementById('placeholder-msg').textContent =
+      ok ? 'Waiting for /map topic…' : 'Not connected to ROS';
+    document.getElementById('placeholder-hint').textContent =
+      ok ? 'Start Walter in mapping or navigate mode' : `ws://${location.hostname}:9090`;
+  }
 }
 
 // ── Map ───────────────────────────────────────────────────────────────────
