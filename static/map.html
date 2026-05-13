@@ -93,6 +93,16 @@ header {
   font-family:monospace; font-size:.58rem; color:#1e2537;
   pointer-events:none; z-index:5;
 }
+#debug-panel {
+  display:none; position:absolute; bottom:28px; left:10px; right:10px;
+  max-height:170px; overflow-y:auto;
+  background:rgba(9,11,18,.93); border:1px solid #253050;
+  border-radius:6px; padding:6px 8px;
+  font-family:monospace; font-size:.57rem; line-height:1.75;
+  z-index:15; pointer-events:auto;
+}
+#debug-panel.visible { display:block; }
+#debug-panel div { white-space:pre-wrap; word-break:break-all; }
 #front-banner {
   position:absolute; top:8px; left:50%; transform:translateX(-50%);
   background:rgba(13,15,24,.85); border:1px solid #1a1d2e;
@@ -281,7 +291,10 @@ header {
       <button id="zoom-in"    title="Zoom in">+</button>
       <button id="zoom-reset" title="Reset zoom">⊙</button>
       <button id="zoom-out"   title="Zoom out">−</button>
+      <button id="zoom-debug" title="Toggle debug log" style="font-size:.72rem">🐛</button>
     </div>
+    <!-- On-screen debug log -->
+    <div id="debug-panel"></div>
   </div>
 
   <!-- ── Right panel ── -->
@@ -550,6 +563,57 @@ function toLogical(ax, ay) {
   });
 })();
 
+// ── Debug logging ─────────────────────────────────────────────────────────
+const DBG_MAX = 40;
+let debugLines   = [];
+let debugVisible = false;
+let scanFrameCount = 0;   // counts scan messages for throttled stats update
+
+function dbg(msg, level = 'info') {
+  const now  = new Date();
+  const ts   = now.toLocaleTimeString('en-US', { hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' })
+             + '.' + String(now.getMilliseconds()).padStart(3,'0');
+  debugLines.push({ ts, msg, level });
+  if (debugLines.length > DBG_MAX) debugLines.shift();
+  const fn = level === 'warn'  ? console.warn
+           : level === 'error' ? console.error
+           : level === 'ok'    ? console.info
+           :                     console.log;
+  fn(`[Walter ${ts}] ${msg}`);
+  if (debugVisible) _renderDbgPanel();
+}
+
+function _renderDbgPanel() {
+  const panel = document.getElementById('debug-panel');
+  if (!panel) return;
+  const colors = { info:'#94a3b8', warn:'#f59e0b', error:'#ef4444', ok:'#22c55e' };
+  panel.innerHTML = debugLines.slice().reverse().map(e => {
+    const c = colors[e.level] || colors.info;
+    return `<div style="color:${c}">[${e.ts}] ${e.msg}</div>`;
+  }).join('');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('zoom-debug').addEventListener('click', () => {
+    debugVisible = !debugVisible;
+    document.getElementById('debug-panel').classList.toggle('visible', debugVisible);
+    document.getElementById('zoom-debug').style.color = debugVisible ? '#f59e0b' : '';
+    if (debugVisible) _renderDbgPanel();
+  });
+});
+
+// Update the map-info bar with live stats
+function updateMapInfo() {
+  const pts    = accumPoints.length / 2;
+  const mapStr = mapMeta
+    ? `${mapMeta.width}×${mapMeta.height}  ${mapMeta.resolution.toFixed(3)} m/px`
+    : '—';
+  const modeStr = scanMode === 'live' ? ' ◉ live'
+                : scanMode === 'accumulate' ? ` ◉ accum  ${pts.toLocaleString()} pts`
+                : ' ○ off';
+  document.getElementById('map-info').textContent = mapStr + modeStr;
+}
+
 // ── ROS ───────────────────────────────────────────────────────────────────
 function connect() {
   ros = new ROSLIB.Ros({ url: ROSBRIDGE });
@@ -572,6 +636,7 @@ function connect() {
 function setConn(ok) {
   document.getElementById('conn-dot').className   = 'conn-dot' + (ok ? ' ok' : ' err');
   document.getElementById('conn-label').textContent = ok ? 'Connected' : 'Disconnected';
+  dbg(`ROS ${ok ? 'connected ✓' : 'disconnected ✗'}  mapMeta=${!!mapMeta}  accumPts=${accumPoints.length/2}`, ok ? 'ok' : 'error');
   // Update placeholder only while it's still visible (no map received yet)
   if (!mapMeta) {
     document.getElementById('placeholder-msg').textContent =
@@ -585,11 +650,16 @@ function setConn(ok) {
 function subscribeMap() {
   const t = new ROSLIB.Topic({ ros, name:'/map', messageType:'nav_msgs/OccupancyGrid', throttle_rate:2000 });
   t.subscribe(msg => {
+    const prevMeta = mapMeta;
     mapMeta = msg.info;
+    const ox = msg.info.origin.position.x.toFixed(2);
+    const oy = msg.info.origin.position.y.toFixed(2);
+    if (!prevMeta || prevMeta.width !== msg.info.width || prevMeta.height !== msg.info.height) {
+      dbg(`/map  ${msg.info.width}×${msg.info.height}  res=${msg.info.resolution.toFixed(4)}  origin=(${ox},${oy})${prevMeta ? '  ← GREW' : '  ← first'}`, 'warn');
+    }
     drawMap(msg);
     document.getElementById('map-placeholder').classList.add('hidden');
-    document.getElementById('map-info').textContent =
-      `${msg.info.width}×${msg.info.height}  ${msg.info.resolution.toFixed(3)} m/px`;
+    updateMapInfo();
   });
 }
 
@@ -634,13 +704,17 @@ function drawMap(msg) {
   // resized by syncScan() which wipes its content.  Redraw from stored
   // world-coordinate points so accumulated scans survive the resize.
   const mapGrew = (width !== prevMapW || height !== prevMapH);
+  const oldW = prevMapW, oldH = prevMapH;
   prevMapW = width; prevMapH = height;
 
-  syncScan();
+  syncScan();   // may wipe scan-canvas if dimensions changed
 
-  if (mapGrew && scanMode === 'accumulate' && accumPoints.length > 0) {
-    const sc = document.getElementById('scan-canvas');
-    redrawAccumPoints(sc.getContext('2d'), sc);
+  if (mapGrew) {
+    dbg(`drawMap: mapGrew ${oldW}×${oldH}→${width}×${height}  mode=${scanMode}  accumPts=${accumPoints.length/2}`, 'warn');
+    if (scanMode === 'accumulate' && accumPoints.length > 0) {
+      const sc = document.getElementById('scan-canvas');
+      redrawAccumPoints(sc.getContext('2d'), sc);
+    }
   }
 
   renderOverlay();
@@ -711,19 +785,29 @@ function syncScan() {
     const area = document.getElementById('map-area');
     w = area.clientWidth; h = area.clientHeight;
   }
-  if (scan.width !== w)  scan.width  = w;
-  if (scan.height !== h) scan.height = h;
+  if (scan.width !== w) {
+    dbg(`syncScan: width  ${scan.width}→${w}  ⚠ scan-canvas WIPED  mode=${scanMode}  pts=${accumPoints.length/2}`, 'warn');
+    scan.width  = w;
+  }
+  if (scan.height !== h) {
+    dbg(`syncScan: height ${scan.height}→${h}  ⚠ scan-canvas WIPED  mode=${scanMode}  pts=${accumPoints.length/2}`, 'warn');
+    scan.height = h;
+  }
 }
 function clearScan() {
+  const pts = accumPoints.length / 2;
+  dbg(`clearScan: removed ${pts} pts  canvas=${document.getElementById('scan-canvas').width}×${document.getElementById('scan-canvas').height}`, 'warn');
   accumPoints = [];
   const c = document.getElementById('scan-canvas');
   c.getContext('2d').clearRect(0, 0, c.width, c.height);
+  updateMapInfo();
 }
 function stopScan() {
   if (scanSub) { scanSub.unsubscribe(); scanSub = null; }
 }
 
 function applyScanMode() {
+  dbg(`applyScanMode: mode=${scanMode}  accumPts=${accumPoints.length/2}  mapMeta=${!!mapMeta}`, 'info');
   stopScan();
   if (!ros || scanMode === 'off') return;
   const rate = scanMode === 'live' ? 100 : 350;
@@ -768,8 +852,17 @@ function applyScanMode() {
 
       // In accumulate mode: store world coords so the map-resize handler can
       // repaint them; cap at 300 k points (~8 min at default throttle rate).
-      if (scanMode === 'accumulate' && accumPoints.length < 300000) {
-        accumPoints.push(wx, wy);   // interleaved pairs: [x0,y0, x1,y1, ...]
+      if (scanMode === 'accumulate') {
+        if (accumPoints.length < 300000) {
+          accumPoints.push(wx, wy);   // interleaved pairs: [x0,y0, x1,y1, ...]
+          if (accumPoints.length === 240000) {
+            dbg('accumPoints at 80% capacity (120 k pts) — will stop at 150 k', 'warn');
+          }
+        } else if (accumPoints.length === 300000) {
+          dbg('accumPoints CAP REACHED (150 k pts) — no more points stored', 'error');
+          // push a sentinel so this fires only once
+          accumPoints.push(NaN, NaN);
+        }
       }
 
       ctx.fillStyle = scanMode === 'live' ? 'rgba(96,165,250,.75)' : '#3b82f6';
@@ -787,6 +880,15 @@ function applyScanMode() {
     } else {
       document.getElementById('front-val').textContent = '—';
       document.getElementById('front-banner').style.display = 'none';
+    }
+
+    // Update stats every 50 scan frames (~5 s in accumulate mode)
+    scanFrameCount++;
+    if (scanFrameCount % 50 === 0) {
+      updateMapInfo();
+      if (scanMode === 'accumulate') {
+        dbg(`scan heartbeat: pts=${accumPoints.length/2}  canvas=${canvas.width}×${canvas.height}  mapMeta=${mapMeta ? mapMeta.width+'×'+mapMeta.height : 'null'}`, 'info');
+      }
     }
   });
 }
@@ -825,31 +927,45 @@ function drawRadar(ctx, canvas, msg) {
 // Repaint all stored world-coordinate accumulation points onto the canvas.
 // Called after a map resize wipes the scan canvas.
 function redrawAccumPoints(ctx, canvas) {
-  if (!mapMeta || accumPoints.length === 0) return;
+  if (!mapMeta) {
+    dbg('redrawAccumPoints: skipped — no mapMeta', 'warn'); return;
+  }
+  if (accumPoints.length === 0) {
+    dbg('redrawAccumPoints: nothing to draw (0 pts)', 'info'); return;
+  }
+  const ptsCount = accumPoints.length / 2;
+  dbg(`redrawAccumPoints: drawing ${ptsCount} pts onto ${canvas.width}×${canvas.height}  mapMeta=${mapMeta.width}×${mapMeta.height}`, 'info');
   ctx.fillStyle = '#3b82f6';
+  let drawn = 0, skipped = 0;
   for (let i = 0; i < accumPoints.length; i += 2) {
     const wx = accumPoints[i], wy = accumPoints[i+1];
+    if (!isFinite(wx) || !isFinite(wy)) continue;   // skip cap sentinel
     const px = (wx - mapMeta.origin.position.x) / mapMeta.resolution;
     const py = mapMeta.height - (wy - mapMeta.origin.position.y) / mapMeta.resolution;
-    if (px < 0 || px >= canvas.width || py < 0 || py >= canvas.height) continue;
+    if (px < 0 || px >= canvas.width || py < 0 || py >= canvas.height) { skipped++; continue; }
     ctx.fillRect(Math.round(px), Math.round(py), 2, 2);
+    drawn++;
   }
+  dbg(`redrawAccumPoints: done  drawn=${drawn}  skipped=${skipped}`, drawn > 0 ? 'ok' : 'warn');
 }
 
 // Scan control buttons
 document.getElementById('scan-btn').addEventListener('click', () => {
+  dbg(`btn: Live scan clicked  (prev mode=${scanMode}  pts=${accumPoints.length/2})`, 'warn');
   scanMode = 'live';
   document.getElementById('scan-btn').classList.add('active');
   document.getElementById('accum-btn').classList.remove('active');
   clearScan(); applyScanMode();
 });
 document.getElementById('accum-btn').addEventListener('click', () => {
+  dbg(`btn: Accumulate clicked  (prev mode=${scanMode}  pts=${accumPoints.length/2})`, 'info');
   scanMode = 'accumulate';
   document.getElementById('accum-btn').classList.add('active');
   document.getElementById('scan-btn').classList.remove('active');
   applyScanMode();
 });
 document.getElementById('clear-btn').addEventListener('click', () => {
+  dbg(`btn: Clear clicked  mode=${scanMode}  pts=${accumPoints.length/2}`, 'warn');
   clearScan();
   if (scanMode === 'accumulate') applyScanMode();
 });
@@ -1207,6 +1323,7 @@ document.getElementById('save-map-btn').addEventListener('click', async () => {
   btn.textContent = 'Save';
 });
 
+dbg(`page loaded  ua=${navigator.userAgent.slice(0,60)}`, 'info');
 loadWaypoints();
 connect();
 </script>
