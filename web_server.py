@@ -82,14 +82,14 @@ def save_map():
     try:
         result = subprocess.run(
             ['docker', 'exec', 'walter_dev', 'bash', '/ros2_ws/save_map.sh', map_name],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=15,
         )
         if result.returncode == 0:
             return jsonify({'ok': True, 'name': map_name, 'output': result.stdout.strip()})
         else:
-            return jsonify({'ok': False, 'error': result.stderr.strip()}), 500
+            return jsonify({'ok': False, 'error': result.stdout.strip() or result.stderr.strip()}), 500
     except subprocess.TimeoutExpired:
-        return jsonify({'ok': False, 'error': 'Timed out after 30 s'}), 500
+        return jsonify({'ok': False, 'error': 'Timed out — is SLAM Toolbox running?'}), 500
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
 
