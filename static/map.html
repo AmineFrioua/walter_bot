@@ -394,8 +394,11 @@ let drag      = null;       // { key, moved }
 let pendingClick = null;    // { x, y } world coords
 let editTool  = 'table';
 let activeTab = 'drive';
-let scanMode  = 'live';     // 'live' | 'accumulate' | 'off'
-let scanSub   = null;
+let scanMode    = 'live';   // 'live' | 'accumulate' | 'off'
+let accumPoints = [];       // world-coord points stored for accumulation {x,y}
+let prevMapW    = 0;        // used to detect SLAM map resize
+let prevMapH    = 0;
+let scanSub     = null;
 let pubLoop   = null;
 let linSpeed=0.03, angSpeed=0.05;
 const held    = { fwd:false, back:false, left:false, right:false };
@@ -472,7 +475,20 @@ function drawMap(msg) {
   }
 
   ctx.putImageData(img, 0, 0);
+
+  // If the SLAM map grew (new pixel dimensions), the scan canvas will be
+  // resized by syncScan() which wipes its content.  Redraw from stored
+  // world-coordinate points so accumulated scans survive the resize.
+  const mapGrew = (width !== prevMapW || height !== prevMapH);
+  prevMapW = width; prevMapH = height;
+
   syncScan();
+
+  if (mapGrew && scanMode === 'accumulate' && accumPoints.length > 0) {
+    const sc = document.getElementById('scan-canvas');
+    redrawAccumPoints(sc.getContext('2d'), sc);
+  }
+
   renderOverlay();
   updateRobot();
 }
@@ -500,7 +516,9 @@ function updateRobot() {
   const hdg = document.getElementById('robot-heading');
   hdg.style.left      = pos.left + 'px';
   hdg.style.top       = (pos.top - 20) + 'px';
-  hdg.style.transform = `rotate(${-robotPose.theta}rad) translateX(-50%)`;
+  // Bar starts pointing UP (no rotation).  ROS theta=0 → robot faces +X → screen right.
+  // Screen right from UP = 90° CW = +π/2.  General: screen_angle = π/2 - theta.
+  hdg.style.transform = `rotate(${Math.PI / 2 - robotPose.theta}rad) translateX(-50%)`;
   hdg.style.display   = 'block';
 }
 
@@ -543,6 +561,7 @@ function syncScan() {
   if (scan.height !== h) scan.height = h;
 }
 function clearScan() {
+  accumPoints = [];
   const c = document.getElementById('scan-canvas');
   c.getContext('2d').clearRect(0, 0, c.width, c.height);
 }
@@ -559,8 +578,19 @@ function applyScanMode() {
     syncScan();
     const canvas = document.getElementById('scan-canvas');
     const ctx    = canvas.getContext('2d');
+
+    // Pre-map radar: always show current frame only — no sensor-frame
+    // accumulation (accumulated sensor-frame dots rotate with the robot,
+    // which looks like the map is spinning).
+    if (!mapMeta) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawRadar(ctx, canvas, msg);
+      return;
+    }
+
     if (scanMode === 'live') ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (!mapMeta) { drawRadar(ctx, canvas, msg); return; }
+    // accumulate mode: do NOT clear — we draw only new points each frame.
+    // Accumulated world-coord points survive map resizes via redrawAccumPoints().
 
     let frontMin = Infinity, frontPx = null, frontPy = null;
     const { x:rx, y:ry, theta } = robotPose;
@@ -576,10 +606,16 @@ function applyScanMode() {
       const py = mapMeta.height - (wy - mapMeta.origin.position.y) / mapMeta.resolution;
       if (px < 0 || px >= canvas.width || py < 0 || py >= canvas.height) continue;
 
-      // Frontal detection — front of robot = BACK of LiDAR = angle near ±π
-      const fromPi = Math.min(Math.abs(a - Math.PI), Math.abs(a + Math.PI));
-      if (fromPi < FRONT_ARC && r < frontMin) {
+      // Frontal detection — URDF rpy="0 0 0" → laser_frame aligned with base_link
+      // → LiDAR angle 0 = robot front (+X)
+      if (Math.abs(a) < FRONT_ARC && r < frontMin) {
         frontMin = r; frontPx = Math.round(px); frontPy = Math.round(py);
+      }
+
+      // In accumulate mode: store world coords so the map-resize handler can
+      // repaint them; cap at 300 k points (~8 min at default throttle rate).
+      if (scanMode === 'accumulate' && accumPoints.length < 300000) {
+        accumPoints.push(wx, wy);   // interleaved pairs: [x0,y0, x1,y1, ...]
       }
 
       ctx.fillStyle = scanMode === 'live' ? 'rgba(96,165,250,.75)' : '#3b82f6';
@@ -602,6 +638,7 @@ function applyScanMode() {
 }
 
 function drawRadar(ctx, canvas, msg) {
+  // Pre-map sensor-frame radar.  Always called on a freshly-cleared canvas.
   const cx = canvas.width/2, cy = canvas.height/2;
   const maxR = Math.min(msg.range_max || 6, 6);
   const scale = Math.min(cx, cy) * 0.85 / maxR;
@@ -614,19 +651,35 @@ function drawRadar(ctx, canvas, msg) {
     const r = msg.ranges[i];
     if (!isFinite(r) || r<0.05 || r>msg.range_max) continue;
     const a = msg.angle_min + i * msg.angle_increment;
-    const isFront = Math.min(Math.abs(a - Math.PI), Math.abs(a + Math.PI)) < FRONT_ARC;
+    // LiDAR angle 0 = robot front (URDF rpy 0 0 0, laser_frame aligned with base_link)
+    const isFront = Math.abs(a) < FRONT_ARC;
     ctx.fillStyle = isFront ? '#f59e0b' : 'rgba(96,165,250,.7)';
+    // In sensor frame: +x right, +y up — flip y for canvas (y increases down)
     ctx.fillRect(Math.round(cx + r*Math.cos(a)*scale), Math.round(cy - r*Math.sin(a)*scale), isFront ? 3 : 2, isFront ? 3 : 2);
     if (isFront && r < frontMin) frontMin = r;
   }
   if (frontMin < Infinity) {
     document.getElementById('front-val').textContent = frontMin.toFixed(2) + ' m';
   }
-  // Robot dot
+  // Robot dot + forward indicator pointing right (angle 0 = front = +x)
   ctx.fillStyle = '#3b82f6';
   ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI*2); ctx.fill();
   ctx.strokeStyle = '#60a5fa'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy-18); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + 18, cy); ctx.stroke();
+}
+
+// Repaint all stored world-coordinate accumulation points onto the canvas.
+// Called after a map resize wipes the scan canvas.
+function redrawAccumPoints(ctx, canvas) {
+  if (!mapMeta || accumPoints.length === 0) return;
+  ctx.fillStyle = '#3b82f6';
+  for (let i = 0; i < accumPoints.length; i += 2) {
+    const wx = accumPoints[i], wy = accumPoints[i+1];
+    const px = (wx - mapMeta.origin.position.x) / mapMeta.resolution;
+    const py = mapMeta.height - (wy - mapMeta.origin.position.y) / mapMeta.resolution;
+    if (px < 0 || px >= canvas.width || py < 0 || py >= canvas.height) continue;
+    ctx.fillRect(Math.round(px), Math.round(py), 2, 2);
+  }
 }
 
 // Scan control buttons
