@@ -527,16 +527,20 @@ function screenToWorld(sx, sy) {
 
 // ── Scan ──────────────────────────────────────────────────────────────────
 function syncScan() {
+  // IMPORTANT: assigning to canvas.width / canvas.height ALWAYS wipes the
+  // canvas — even when the value is unchanged.  Only assign when the size
+  // truly needs to change, otherwise accumulate mode gets erased every frame.
   const scan = document.getElementById('scan-canvas');
+  let w, h;
   if (mapMeta) {
     const map = document.getElementById('map-canvas');
-    scan.width  = map.width;
-    scan.height = map.height;
+    w = map.width; h = map.height;
   } else {
     const area = document.getElementById('map-area');
-    scan.width  = area.clientWidth;
-    scan.height = area.clientHeight;
+    w = area.clientWidth; h = area.clientHeight;
   }
+  if (scan.width !== w)  scan.width  = w;
+  if (scan.height !== h) scan.height = h;
 }
 function clearScan() {
   const c = document.getElementById('scan-canvas');
