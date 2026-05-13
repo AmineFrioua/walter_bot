@@ -572,8 +572,9 @@ function applyScanMode() {
       const py = mapMeta.height - (wy - mapMeta.origin.position.y) / mapMeta.resolution;
       if (px < 0 || px >= canvas.width || py < 0 || py >= canvas.height) continue;
 
-      // Frontal detection
-      if (Math.abs(a) < FRONT_ARC && r < frontMin) {
+      // Frontal detection — front of robot = BACK of LiDAR = angle near ±π
+      const fromPi = Math.min(Math.abs(a - Math.PI), Math.abs(a + Math.PI));
+      if (fromPi < FRONT_ARC && r < frontMin) {
         frontMin = r; frontPx = Math.round(px); frontPy = Math.round(py);
       }
 
@@ -609,7 +610,7 @@ function drawRadar(ctx, canvas, msg) {
     const r = msg.ranges[i];
     if (!isFinite(r) || r<0.05 || r>msg.range_max) continue;
     const a = msg.angle_min + i * msg.angle_increment;
-    const isFront = Math.abs(a) < FRONT_ARC;
+    const isFront = Math.min(Math.abs(a - Math.PI), Math.abs(a + Math.PI)) < FRONT_ARC;
     ctx.fillStyle = isFront ? '#f59e0b' : 'rgba(96,165,250,.7)';
     ctx.fillRect(Math.round(cx + r*Math.cos(a)*scale), Math.round(cy - r*Math.sin(a)*scale), isFront ? 3 : 2, isFront ? 3 : 2);
     if (isFront && r < frontMin) frontMin = r;
@@ -719,10 +720,17 @@ document.getElementById('overlay').addEventListener('pointerup', e => {
 });
 
 // ── Map click (place new item) ────────────────────────────────────────────
-document.getElementById('map-area').addEventListener('click', e => {
-  if (activeTab !== 'edit' || !mapMeta || drag?.moved) return;
-  if (e.target.closest('.wp-dot')) return;      // clicking existing dot
-  const rect = e.currentTarget.getBoundingClientRect();
+// Listener on overlay (not map-area) because in edit-mode the overlay sits
+// on top (z-index:3, pointer-events:auto) and directly receives the click.
+document.getElementById('overlay').addEventListener('click', e => {
+  if (activeTab !== 'edit') return;
+  if (e.target.closest('.wp-dot')) return;      // clicking existing dot — handled by dot
+  if (!mapMeta) {
+    document.getElementById('edit-hint').textContent =
+      '⚠ Map not loaded yet — wait for SLAM to publish, then try again.';
+    return;
+  }
+  const rect = document.getElementById('map-area').getBoundingClientRect();
   const pos  = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
   if (!pos) return;
   if (editTool === 'origin') {

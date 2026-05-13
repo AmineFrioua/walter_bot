@@ -13,7 +13,9 @@ mkdir -p "$MAP_DIR"
 echo "💾 Saving map as '$MAP_NAME'..."
 ros2 run nav2_map_server map_saver_cli \
     -f "$MAP_DIR/$MAP_NAME" \
-    --ros-args -p save_map_timeout:=10.0
+    --ros-args \
+    -p save_map_timeout:=10.0 \
+    -p use_transient_local_qos:=true
 
 if [ $? -eq 0 ]; then
     echo "✅ Map saved: $MAP_DIR/$MAP_NAME.pgm + .yaml"
