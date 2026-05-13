@@ -9,17 +9,31 @@ MAP_NAME="${2:-room_map}"
 MAP_FILE="/ros2_ws/maps/${MAP_NAME}"
 
 # --- GRACEFUL SHUTDOWN ---
+_SHUTDOWN=0
 cleanup() {
+    # Re-entrancy guard — ignore repeated Ctrl+C presses during cleanup
+    [ "$_SHUTDOWN" -eq 1 ] && return
+    _SHUTDOWN=1
+    trap '' SIGINT SIGTERM   # block further signals while we clean up
+
     echo ""
     echo "🔴 Shutting down Walter cleanly..."
+
+    # In mapping mode: attempt map save NOW, while SLAM Toolbox is still
+    # starting to shut down (it received the same SIGINT but takes ~2 s to
+    # fully exit, giving us a brief window to call the save service).
     if [ "$MODE" = "mapping" ]; then
-        echo "💾 Auto-saving map before exit..."
-        bash /ros2_ws/save_map.sh "${MAP_NAME}" 2>/dev/null || true
+        echo "💾 Saving map before exit..."
+        bash /ros2_ws/save_map.sh "${MAP_NAME}" 2>/dev/null \
+            && echo "✅ Map saved." \
+            || echo "⚠️  Map save skipped (SLAM already stopped)."
     fi
+
+    # Kill all background jobs (auto-save loop, nodes, rosbridge…)
     kill $(jobs -p) 2>/dev/null
-    wait $(jobs -p) 2>/dev/null
+    wait 2>/dev/null
     echo "💤 Walter is asleep."
-    exit
+    exit 0
 }
 trap cleanup SIGINT SIGTERM
 

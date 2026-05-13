@@ -190,12 +190,13 @@ def main(args=None):
     node = WalterHardwareBridge()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
         pass
     finally:
-        node.send_motor_cmd(26)
+        node.send_motor_cmd(26)   # always stop motors on exit
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
