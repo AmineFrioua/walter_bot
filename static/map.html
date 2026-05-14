@@ -250,7 +250,8 @@ header {
       <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".25">
         <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
       </svg>
-      Waiting for SLAM map…
+      <span id="placeholder-msg">Connecting to ROS…</span>
+      <span id="placeholder-hint" style="font-size:.6rem;opacity:.5;margin-top:2px"></span>
     </div>
     <div id="map-info"></div>
     <div id="front-banner">Front: —</div>
@@ -416,18 +417,47 @@ function connect() {
     setConn(false);
     clearInterval(pubLoop); pubLoop = null;
     stopScan();
+    // Remove stale /map listener — new ros object created on reconnect
+    ros.removeAllListeners('/map');
     setTimeout(connect, 3000);
   });
 }
 function setConn(ok) {
-  document.getElementById('conn-dot').className  = 'conn-dot' + (ok ? ' ok' : ' err');
+  document.getElementById('conn-dot').className   = 'conn-dot' + (ok ? ' ok' : ' err');
   document.getElementById('conn-label').textContent = ok ? 'Connected' : 'Disconnected';
+  // Only update placeholder while no map has arrived yet
+  if (!mapMeta) {
+    document.getElementById('placeholder-msg').textContent =
+      ok ? 'Waiting for /map topic…' : 'Not connected to ROS';
+    document.getElementById('placeholder-hint').textContent =
+      ok ? 'Start Walter in mapping or navigate mode'
+         : `rosbridge ws://${location.hostname}:9090`;
+  }
 }
 
 // ── Map ───────────────────────────────────────────────────────────────────
 function subscribeMap() {
-  const t = new ROSLIB.Topic({ ros, name:'/map', messageType:'nav_msgs/OccupancyGrid', throttle_rate:2000 });
-  t.subscribe(msg => {
+  // Subscribe with transient_local durability so we receive:
+  //   • map_server's single latched /map in navigate mode
+  //   • SLAM Toolbox's /map in mapping mode (also RELIABLE + TRANSIENT_LOCAL)
+  // Standard ROSLIB.Topic uses VOLATILE durability and silently misses the
+  // initial latched publish from both map_server and SLAM Toolbox.
+  ros.socket.send(JSON.stringify({
+    op:            'subscribe',
+    id:            'map_sub_tl',
+    topic:         '/map',
+    type:          'nav_msgs/OccupancyGrid',
+    throttle_rate: 2000,
+    qos: {
+      depth:       1,
+      durability:  'transient_local',
+      history:     'keep_last',
+      reliability: 'reliable',
+    },
+  }));
+
+  // ROSLIB.Ros emits the topic name as event for every incoming publish msg
+  ros.on('/map', msg => {
     mapMeta = msg.info;
     drawMap(msg);
     document.getElementById('map-placeholder').classList.add('hidden');
