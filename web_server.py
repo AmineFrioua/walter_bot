@@ -20,10 +20,9 @@ WAYPOINTS_FILE = os.path.join(os.path.dirname(__file__), 'waypoints.json')
 DELIVERY_WAIT_S = 10  # seconds to wait at destination before returning home
 
 # ── Battery config (BQ25820 charger IC at I2C 0x6B) ──────────────────────────
-# Voltage range for percentage estimate — adjust to match your pack chemistry.
-# Defaults: 3S Li-ion/LiPo (9.0 V empty → 12.6 V full).
-BATTERY_MIN_V   = 9.0
-BATTERY_MAX_V   = 12.6
+# Voltage range for percentage estimate — 8S Li-ion (3.0 V/cell empty → 4.0 V/cell full).
+BATTERY_MIN_V   = 24.0   # 8S × 3.0 V
+BATTERY_MAX_V   = 32.0   # 8S × 4.0 V
 _BQ25820_ADDR   = 0x6B
 
 # BQ25820 register addresses (all 16-bit, little-endian: low byte at addr, high at addr+1)
