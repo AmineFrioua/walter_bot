@@ -767,6 +767,7 @@ function connect() {
     clearInterval(pubLoop); pubLoop = null;
     stopScan();
     _stopImuLog();   // imuSub references old ros object — must clean up
+    ros.removeAllListeners('/map');   // stale listener — new ros object on reconnect
     setTimeout(connect, 3000);
   });
 }
@@ -774,19 +775,39 @@ function setConn(ok) {
   document.getElementById('conn-dot').className   = 'conn-dot' + (ok ? ' ok' : ' err');
   document.getElementById('conn-label').textContent = ok ? 'Connected' : 'Disconnected';
   dbg(`ROS ${ok ? 'connected ✓' : 'disconnected ✗'}  mapMeta=${!!mapMeta}  accumPts=${accumPoints.length/2}`, ok ? 'ok' : 'error');
-  // Update placeholder only while it's still visible (no map received yet)
+  // Only update placeholder while no map has arrived yet
   if (!mapMeta) {
     document.getElementById('placeholder-msg').textContent =
       ok ? 'Waiting for /map topic…' : 'Not connected to ROS';
     document.getElementById('placeholder-hint').textContent =
-      ok ? 'Start Walter in mapping or navigate mode' : `ws://${location.hostname}:9090`;
+      ok ? 'Start Walter in mapping or navigate mode'
+         : `rosbridge ws://${location.hostname}:9090`;
   }
 }
 
 // ── Map ───────────────────────────────────────────────────────────────────
 function subscribeMap() {
-  const t = new ROSLIB.Topic({ ros, name:'/map', messageType:'nav_msgs/OccupancyGrid', throttle_rate:2000 });
-  t.subscribe(msg => {
+  // Subscribe with transient_local durability so we receive:
+  //   • map_server's single latched /map in navigate mode
+  //   • SLAM Toolbox's /map in mapping mode (also RELIABLE + TRANSIENT_LOCAL)
+  // Standard ROSLIB.Topic uses VOLATILE durability and silently misses the
+  // initial latched publish from both map_server and SLAM Toolbox.
+  ros.socket.send(JSON.stringify({
+    op:            'subscribe',
+    id:            'map_sub_tl',
+    topic:         '/map',
+    type:          'nav_msgs/OccupancyGrid',
+    throttle_rate: 2000,
+    qos: {
+      depth:       1,
+      durability:  'transient_local',
+      history:     'keep_last',
+      reliability: 'reliable',
+    },
+  }));
+
+  // ROSLIB.Ros emits the topic name as event for every incoming publish msg
+  ros.on('/map', msg => {
     mapMsgTotal++;
     const prevMeta = mapMeta;
     mapMeta = msg.info;

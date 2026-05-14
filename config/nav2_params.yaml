@@ -89,11 +89,11 @@ controller_server:
       debug_trajectory_details: True
       min_vel_x: 0.0
       min_vel_y: 0.0
-      max_vel_x: 0.10
+      max_vel_x: 0.01
       max_vel_y: 0.0
-      max_vel_theta: 1.0
+      max_vel_theta: 0.02
       min_speed_xy: 0.0
-      max_speed_xy: 0.10
+      max_speed_xy: 0.01
       min_speed_theta: 0.0
       acc_lim_x: 2.5
       acc_lim_y: 0.0
@@ -236,8 +236,8 @@ behavior_server:
     robot_base_frame: base_link
     transform_tolerance: 0.1
     simulate_ahead_time: 2.0
-    max_rotational_vel: 1.0
-    min_rotational_vel: 0.4
+    max_rotational_vel: 0.02
+    min_rotational_vel: 0.02
     rotational_acc_lim: 3.2
 
 waypoint_follower:
@@ -257,8 +257,8 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
-    max_velocity: [0.10, 0.0, 1.0]
-    min_velocity: [-0.10, 0.0, -1.0]
+    max_velocity: [0.01, 0.0, 0.02]
+    min_velocity: [-0.01, 0.0, -0.02]
     max_accel: [2.5, 0.0, 3.2]
     max_decel: [-2.5, 0.0, -3.2]
     odom_topic: "odom"
