@@ -441,6 +441,13 @@ let prevMapW    = 0;        // used to detect SLAM map resize
 let prevMapH    = 0;
 let scanSub     = null;
 
+// ── TF: map→odom transform published by SLAM Toolbox ─────────────────────
+// SLAM Toolbox continuously updates this transform to correct for odometry
+// drift.  We need it to project scan points into the MAP frame rather than
+// the raw odometry (odom) frame — otherwise accumulated points drift away
+// from the correct map positions as SLAM makes corrections.
+let tfMapToOdom = null;   // cached { translation:{x,y,z}, rotation:{x,y,z,w} }
+
 // ── Zoom / pan state ──────────────────────────────────────────────────────
 let zoom = 1, panX = 0, panY = 0;
 let mousePan = null;        // { x, y, panX0, panY0 } while dragging
@@ -739,6 +746,7 @@ function connect() {
     if (!pubLoop) pubLoop = setInterval(publishDrive, 100);
     subscribeMap();
     subscribeOdom();
+    subscribeTf();
     applyScanMode();
     if (logCategories.imu) _startImuLog();   // re-subscribe if IMU was on
     // Warn if no data arrives within 15 s — likely QoS or node issue
@@ -752,7 +760,8 @@ function connect() {
   });
   ros.on('error',  () => setConn(false));
   ros.on('close',  () => {
-    connStart = null;
+    connStart     = null;
+    tfMapToOdom   = null;   // stale TF from old session — reset on reconnect
     clearTimeout(noDataTimer);
     setConn(false);
     clearInterval(pubLoop); pubLoop = null;
@@ -848,6 +857,49 @@ function drawMap(msg) {
 
   renderOverlay();
   updateRobot();
+}
+
+// ── TF subscription (map→odom transform from SLAM Toolbox) ───────────────
+function subscribeTf() {
+  // /tf is a high-frequency topic; throttle to ~10 Hz to avoid flooding
+  // the rosbridge WebSocket.  We only care about the map→odom pair.
+  const tfSub = new ROSLIB.Topic({
+    ros,
+    name:        '/tf',
+    messageType: 'tf2_msgs/TFMessage',
+    throttle_rate: 100,
+  });
+  tfSub.subscribe(msg => {
+    for (const t of msg.transforms) {
+      if (t.header.frame_id === 'map' && t.child_frame_id === 'odom') {
+        tfMapToOdom = t.transform;
+      }
+    }
+  });
+}
+
+// Return robot pose in the MAP frame by composing the map→odom TF with the
+// odometry pose.  Falls back to raw odometry when the TF is not yet available
+// (e.g. before SLAM Toolbox has published its first transform).
+//
+// For 2-D transforms the composition is:
+//   x_map  = tx + cos(mt)*x_odom - sin(mt)*y_odom
+//   y_map  = ty + sin(mt)*x_odom + cos(mt)*y_odom
+//   th_map = mt + th_odom
+// where (tx, ty, mt) are the translation and yaw of the map→odom transform.
+function robotPoseInMap() {
+  if (!tfMapToOdom) return robotPose;   // best-effort fallback
+  const { x: ox, y: oy } = robotPose;
+  const ot = robotPose.theta;
+  const { x: tx, y: ty }   = tfMapToOdom.translation;
+  const { z: qz, w: qw }   = tfMapToOdom.rotation;
+  const mt = 2 * Math.atan2(qz, qw);
+  const c  = Math.cos(mt), s = Math.sin(mt);
+  return {
+    x:     tx + c * ox - s * oy,
+    y:     ty + s * ox + c * oy,
+    theta: mt + ot,
+  };
 }
 
 // ── Odometry ──────────────────────────────────────────────────────────────
@@ -966,7 +1018,9 @@ function applyScanMode() {
     // Accumulated world-coord points survive map resizes via redrawAccumPoints().
 
     let frontMin = Infinity, frontPx = null, frontPy = null;
-    const { x:rx, y:ry, theta } = robotPose;
+    // Use map-frame pose so accumulated points align with the SLAM map even
+    // after SLAM Toolbox has corrected the map→odom transform.
+    const { x:rx, y:ry, theta } = robotPoseInMap();
 
     for (let i = 0; i < msg.ranges.length; i++) {
       const r = msg.ranges[i];
@@ -1447,7 +1501,9 @@ document.getElementById('save-map-btn').addEventListener('click', async () => {
     const data = await res.json();
     if (data.ok) {
       stat.style.color = '#22c55e';
-      stat.textContent = `✓ Saved as "${name}"`;
+      stat.innerHTML =
+        `✓ Saved as "${name}" — <a href="/static/editor.html?map=${encodeURIComponent(name)}" `
+        + `style="color:#60a5fa;text-decoration:none">Edit map →</a>`;
     } else {
       stat.style.color = '#ef4444';
       stat.textContent = '✗ ' + (data.error || 'Failed');
