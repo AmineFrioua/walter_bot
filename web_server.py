@@ -8,10 +8,27 @@ The browser talks to ROS via rosbridge at ws://localhost:9090.
 from flask import Flask, jsonify, request, send_from_directory
 import json, os, math, subprocess, re, struct
 
+try:
+    from smbus2 import SMBus as _SMBus
+    _HAS_SMBUS = True
+except ImportError:
+    _HAS_SMBUS = False
+
 app = Flask(__name__, static_folder='static')
 
 WAYPOINTS_FILE = os.path.join(os.path.dirname(__file__), 'waypoints.json')
 DELIVERY_WAIT_S = 10  # seconds to wait at destination before returning home
+
+# ── Battery config ────────────────────────────────────────────────────────────
+# Voltage range for battery percentage — adjust to match your pack chemistry.
+# Defaults: 3S Li-ion / LiPo (9.0 V empty → 12.6 V full).
+BATTERY_MIN_V = 9.0
+BATTERY_MAX_V = 12.6
+# INA219 I2C addresses to probe (0x40–0x43, set by A0/A1 pins)
+_INA219_ADDRS = [0x40, 0x41, 0x42, 0x43]
+# Standard calibration for 0.1 Ω shunt, 3.2 A max, 0.1 mA LSB
+_INA219_CAL   = 4096
+_INA219_LSB_MA = 0.1  # mA per raw current LSB
 
 
 def load_waypoints():
@@ -228,6 +245,109 @@ def get_map_data(name):
             },
         },
         'data': data,
+    })
+
+
+# ── Battery API ───────────────────────────────────────────────────────────────
+
+def _ina219_read(addr):
+    """
+    Read bus voltage (V) and current (mA) from an INA219 at I2C address addr.
+    Writes the calibration register on each call so the sensor works even if
+    it was power-cycled. Returns (voltage_v, current_ma) or (None, None).
+    """
+    if not _HAS_SMBUS:
+        return None, None
+    try:
+        with _SMBus(1) as bus:
+            # Write calibration register (0x05) — enables current measurement
+            cal_be = ((_INA219_CAL >> 8) & 0xFF) | ((_INA219_CAL & 0xFF) << 8)
+            bus.write_word_data(addr, 0x05, cal_be)
+
+            # Bus voltage register 0x02: bits[15:3] = voltage in 4 mV steps
+            raw_v = bus.read_word_data(addr, 0x02)
+            raw_v = ((raw_v & 0xFF) << 8) | ((raw_v >> 8) & 0xFF)
+            voltage_v = (raw_v >> 3) * 0.004
+
+            # Current register 0x04: signed 16-bit, LSB = _INA219_LSB_MA
+            raw_i = bus.read_word_data(addr, 0x04)
+            raw_i = ((raw_i & 0xFF) << 8) | ((raw_i >> 8) & 0xFF)
+            if raw_i > 32767:
+                raw_i -= 65536
+            current_ma = raw_i * _INA219_LSB_MA
+
+        return voltage_v, current_ma
+    except Exception:
+        return None, None
+
+
+def _vcgencmd_battery_fallback():
+    """
+    Pi under-voltage proxy via vcgencmd. Returns a partial battery dict or None.
+    """
+    try:
+        thr_out = subprocess.run(
+            ['vcgencmd', 'get_throttled'],
+            capture_output=True, text=True, timeout=2,
+        ).stdout.strip()
+        throttled = int(thr_out.split('=')[1], 16)
+        active_uv     = bool(throttled & (1 << 0))   # bit 0: under-voltage NOW
+        historical_uv = bool(throttled & (1 << 16))  # bit 16: under-voltage since boot
+
+        volt_out = subprocess.run(
+            ['vcgencmd', 'measure_volts', 'core'],
+            capture_output=True, text=True, timeout=2,
+        ).stdout.strip()
+        core_v = float(volt_out.split('=')[1].rstrip('V'))
+
+        status = 'critical' if active_uv else 'low' if historical_uv else 'ok'
+        return {
+            'voltage_v':  core_v,
+            'current_ma': None,
+            'percent':    None,
+            'status':     status,
+            'source':     'vcgencmd',
+        }
+    except Exception:
+        return None
+
+
+@app.route('/api/battery', methods=['GET'])
+def get_battery():
+    """
+    Return battery state. Tries INA219 sensors first, falls back to vcgencmd.
+
+    Response:
+      voltage_v   — measured voltage (V), or null
+      current_ma  — measured current draw (mA), or null
+      percent     — 0-100 charge estimate, or null (unavailable without INA219)
+      status      — "ok" | "low" (<25 %) | "critical" (<10 %) | "unknown"
+      source      — "ina219@0xNN" | "vcgencmd" | "unavailable"
+    """
+    for addr in _INA219_ADDRS:
+        v, i_ma = _ina219_read(addr)
+        if v is not None and v > 0.5:
+            pct = int(min(100, max(0,
+                (v - BATTERY_MIN_V) / (BATTERY_MAX_V - BATTERY_MIN_V) * 100)))
+            status = 'critical' if pct < 10 else 'low' if pct < 25 else 'ok'
+            return jsonify({
+                'voltage_v':  round(v, 3),
+                'current_ma': round(i_ma, 1) if i_ma is not None else None,
+                'percent':    pct,
+                'status':     status,
+                'source':     f'ina219@0x{addr:02x}',
+            })
+
+    fallback = _vcgencmd_battery_fallback()
+    if fallback:
+        return jsonify(fallback)
+
+    return jsonify({
+        'voltage_v':  None,
+        'current_ma': None,
+        'percent':    None,
+        'status':     'unknown',
+        'source':     'unavailable',
     })
 
 
