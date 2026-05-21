@@ -200,17 +200,13 @@ function updateBattery(d) {
 
   if (d.percent !== null) {
     const w = d.percent + '%';
-    pctEl.textContent    = d.percent + '%';
-    fillEl.style.width   = w;
-    barEl.style.width    = w;
-  } else if (d.voltage_v !== null) {
-    pctEl.textContent    = d.voltage_v.toFixed(2) + ' V';
-    fillEl.style.width   = d.status === 'critical' ? '10%' : d.status === 'low' ? '20%' : '60%';
-    barEl.style.width    = fillEl.style.width;
+    pctEl.textContent  = d.percent + '%';
+    fillEl.style.width = w;
+    barEl.style.width  = w;
   } else {
-    pctEl.textContent    = 'Battery —';
-    fillEl.style.width   = '0%';
-    barEl.style.width    = '0%';
+    pctEl.textContent  = 'Battery —';
+    fillEl.style.width = '0%';
+    barEl.style.width  = '0%';
   }
 
   pctEl.className  = 'batt-pct ' + cls;
@@ -219,8 +215,13 @@ function updateBattery(d) {
 
   const parts = [];
   if (d.voltage_v  !== null) parts.push(d.voltage_v.toFixed(2) + ' V');
-  if (d.current_ma !== null) parts.push(d.current_ma.toFixed(0) + ' mA');
-  parts.push(d.source);
+  if (d.current_ma !== null) {
+    const sign = d.current_ma >= 0 ? '+' : '';
+    parts.push(sign + d.current_ma.toFixed(0) + ' mA');
+  }
+  if (d.charge_stat) parts.push(d.charge_stat.replace(/_/g, ' '));
+  if (d.power_good  === true)  parts.push('⚡ charging');
+  if (d.power_good  === false) parts.push('on battery');
   detailEl.textContent = parts.join('  ·  ') || 'unavailable';
 }
 

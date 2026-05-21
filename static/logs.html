@@ -145,13 +145,14 @@ header {
     </div>
 
     <div class="gauge-sect">
-      <div class="gauge-title">Battery</div>
+      <div class="gauge-title">Battery (BQ25820)</div>
       <div class="gauge-grid">
         <div class="gauge-row"><span class="gauge-lbl">Charge</span><span class="gauge-val" id="g-batt-pct">—</span><span class="gauge-unit">%</span></div>
         <div class="gauge-bar-wrap"><div class="gauge-bar" id="gb-batt" style="width:0%;background:#22c55e"></div></div>
-        <div class="gauge-row"><span class="gauge-lbl">Voltage</span><span class="gauge-val" id="g-batt-v">—</span><span class="gauge-unit">V</span></div>
-        <div class="gauge-row"><span class="gauge-lbl">Current</span><span class="gauge-val" id="g-batt-i">—</span><span class="gauge-unit">mA</span></div>
-        <div class="gauge-row"><span class="gauge-lbl">Source</span><span class="gauge-val" style="font-size:.65rem;color:#475569" id="g-batt-src">—</span></div>
+        <div class="gauge-row"><span class="gauge-lbl">VBAT</span><span class="gauge-val" id="g-batt-v">—</span><span class="gauge-unit">V</span></div>
+        <div class="gauge-row"><span class="gauge-lbl">VSYS</span><span class="gauge-val" id="g-batt-vsys">—</span><span class="gauge-unit">V</span></div>
+        <div class="gauge-row"><span class="gauge-lbl">IBAT</span><span class="gauge-val" id="g-batt-i">—</span><span class="gauge-unit">mA</span></div>
+        <div class="gauge-row"><span class="gauge-lbl">State</span><span class="gauge-val" style="font-size:.72rem" id="g-batt-state">—</span></div>
       </div>
     </div>
 
@@ -358,31 +359,38 @@ connect();
 async function pollBattery() {
   try {
     const d = await (await fetch('/api/battery')).json();
-    const pct = d.percent;
+    const pct   = d.percent;
     const color = d.status === 'critical' ? '#ef4444'
                 : d.status === 'low'      ? '#f59e0b'
                 : '#22c55e';
 
-    document.getElementById('g-batt-pct').textContent = pct !== null ? pct : '—';
-    document.getElementById('g-batt-v').textContent   = d.voltage_v  !== null ? d.voltage_v.toFixed(2)  : '—';
-    document.getElementById('g-batt-i').textContent   = d.current_ma !== null ? d.current_ma.toFixed(0) : '—';
-    document.getElementById('g-batt-src').textContent = d.source || '—';
+    document.getElementById('g-batt-pct').textContent  = pct !== null ? pct : '—';
+    document.getElementById('g-batt-v').textContent    = d.voltage_v  !== null ? d.voltage_v.toFixed(2)  : '—';
+    document.getElementById('g-batt-vsys').textContent = d.vsys_v     !== null ? d.vsys_v.toFixed(2)     : '—';
+    document.getElementById('g-batt-i').textContent    = d.current_ma !== null
+      ? (d.current_ma >= 0 ? '+' : '') + d.current_ma.toFixed(0) : '—';
+
+    const stateEl = document.getElementById('g-batt-state');
+    const stateStr = d.charge_stat ? d.charge_stat.replace(/_/g, ' ') : '—';
+    stateEl.textContent = (d.power_good === true ? '⚡ ' : '') + stateStr;
+    stateEl.className   = 'gauge-val' + (d.power_good ? ' ok' : '');
 
     const bar = document.getElementById('gb-batt');
     bar.style.width      = (pct !== null ? pct : 0) + '%';
     bar.style.background = color;
 
-    const pctEl = document.getElementById('g-batt-pct');
-    pctEl.className = 'gauge-val' + (d.status === 'critical' || d.status === 'low' ? ' warn' : '');
+    document.getElementById('g-batt-pct').className =
+      'gauge-val' + (d.status === 'critical' || d.status === 'low' ? ' warn' : '');
 
     if (d.status !== 'unknown') {
-      const msg = pct !== null
-        ? `${pct}%  ${d.voltage_v?.toFixed(2)}V${d.current_ma !== null ? '  ' + d.current_ma.toFixed(0) + 'mA' : ''}`
-        : `${d.voltage_v?.toFixed(2)}V  (${d.source})`;
-      addLog('sys', 'battery: ' + msg, d.status === 'critical' ? 'error' : d.status === 'low' ? 'warn' : '');
+      const iStr = d.current_ma !== null
+        ? `  ${d.current_ma >= 0 ? '+' : ''}${d.current_ma.toFixed(0)}mA` : '';
+      const msg = `${pct ?? '?'}%  ${d.voltage_v?.toFixed(2)}V${iStr}  ${stateStr}`;
+      addLog('sys', 'battery: ' + msg,
+        d.status === 'critical' ? 'error' : d.status === 'low' ? 'warn' : '');
     }
   } catch (e) {
-    document.getElementById('g-batt-src').textContent = 'unavailable';
+    document.getElementById('g-batt-state').textContent = 'unavailable';
   }
 }
 pollBattery();
