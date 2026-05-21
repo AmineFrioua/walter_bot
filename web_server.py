@@ -8,10 +8,34 @@ The browser talks to ROS via rosbridge at ws://localhost:9090.
 from flask import Flask, jsonify, request, send_from_directory
 import json, os, math, subprocess, re, struct
 
+try:
+    from smbus2 import SMBus as _SMBus
+    _HAS_SMBUS = True
+except ImportError:
+    _HAS_SMBUS = False
+
 app = Flask(__name__, static_folder='static')
 
 WAYPOINTS_FILE = os.path.join(os.path.dirname(__file__), 'waypoints.json')
 DELIVERY_WAIT_S = 10  # seconds to wait at destination before returning home
+
+# ── Battery config (BQ25820 charger IC at I2C 0x6B) ──────────────────────────
+# Voltage range for percentage estimate — adjust to match your pack chemistry.
+# Defaults: 3S Li-ion/LiPo (9.0 V empty → 12.6 V full).
+BATTERY_MIN_V   = 9.0
+BATTERY_MAX_V   = 12.6
+_BQ25820_ADDR   = 0x6B
+
+# BQ25820 register addresses (all 16-bit, little-endian: low byte at addr, high at addr+1)
+_BQ_ADC_CTRL    = 0x2B  # bit7=ADC_EN, bit6=ADC_RATE(0=continuous)
+_BQ_STATUS_1    = 0x21  # bits[2:0]=CHARGE_STAT, bit7=ADC_DONE_STAT
+_BQ_STATUS_2    = 0x22  # bit7=PG_STAT (power good / charger connected)
+_BQ_IBAT_ADC    = 0x2F  # signed 16-bit, 2 mA/LSB, range ±20 000 mA
+_BQ_VBAT_ADC    = 0x33  # unsigned 16-bit, 2 mV/LSB, range 0–65 534 mV
+_BQ_VSYS_ADC    = 0x35  # unsigned 16-bit, 2 mV/LSB
+
+_BQ_CHARGE_STAT = {0: 'not_charging', 1: 'trickle', 2: 'pre_charge',
+                   3: 'fast_charge', 4: 'taper_charge'}
 
 
 def load_waypoints():
@@ -228,6 +252,118 @@ def get_map_data(name):
             },
         },
         'data': data,
+    })
+
+
+# ── Battery API ───────────────────────────────────────────────────────────────
+
+def _bq_read_byte(bus, reg):
+    return bus.read_byte_data(_BQ25820_ADDR, reg)
+
+def _bq_read_word(bus, reg):
+    """Read a 16-bit little-endian value: low byte at reg, high byte at reg+1."""
+    lo = bus.read_byte_data(_BQ25820_ADDR, reg)
+    hi = bus.read_byte_data(_BQ25820_ADDR, reg + 1)
+    return (hi << 8) | lo
+
+
+def _bq25820_read():
+    """
+    Read VBAT, IBAT, VSYS and charge status from the BQ25820 at I2C 0x6B.
+    Enables continuous ADC on first call. Returns a dict or None on failure.
+
+    Register reference (datasheet SLUSFN3A):
+      0x2B  ADC_Control    bit7=ADC_EN, bit6=ADC_RATE(0=continuous)
+      0x21  Charger_Status_1  bits[2:0]=CHARGE_STAT, bit7=ADC_DONE_STAT
+      0x22  Charger_Status_2  bit7=PG_STAT
+      0x2F/0x30  IBAT_ADC  signed 16-bit, 2 mA/LSB
+      0x33/0x34  VBAT_ADC  unsigned 16-bit, 2 mV/LSB
+      0x35/0x36  VSYS_ADC  unsigned 16-bit, 2 mV/LSB
+    """
+    if not _HAS_SMBUS:
+        return None
+    try:
+        with _SMBus(1) as bus:
+            # Enable ADC in continuous mode if not already running
+            adc_ctrl = _bq_read_byte(bus, _BQ_ADC_CTRL)
+            if not (adc_ctrl & 0x80):
+                bus.write_byte_data(_BQ25820_ADDR, _BQ_ADC_CTRL,
+                                    (adc_ctrl & 0x3F) | 0x80)  # ADC_EN=1, RATE=continuous
+
+            # VBAT — unsigned 16-bit, 2 mV/LSB
+            vbat_raw  = _bq_read_word(bus, _BQ_VBAT_ADC)
+            vbat_mv   = vbat_raw * 2
+            vbat_v    = vbat_mv / 1000.0
+
+            # IBAT — signed 16-bit 2s complement, 2 mA/LSB
+            # Positive = charging, Negative = discharging
+            ibat_raw  = _bq_read_word(bus, _BQ_IBAT_ADC)
+            if ibat_raw > 32767:
+                ibat_raw -= 65536
+            ibat_ma   = ibat_raw * 2
+
+            # VSYS — unsigned 16-bit, 2 mV/LSB
+            vsys_raw  = _bq_read_word(bus, _BQ_VSYS_ADC)
+            vsys_v    = vsys_raw * 2 / 1000.0
+
+            # Charge status
+            status1   = _bq_read_byte(bus, _BQ_STATUS_1)
+            status2   = _bq_read_byte(bus, _BQ_STATUS_2)
+            charge_stat = status1 & 0x07
+            power_good  = bool(status2 & 0x80)
+
+        return {
+            'vbat_v':      round(vbat_v, 3),
+            'ibat_ma':     round(ibat_ma, 0),
+            'vsys_v':      round(vsys_v, 3),
+            'charge_stat': _BQ_CHARGE_STAT.get(charge_stat, str(charge_stat)),
+            'power_good':  power_good,
+        }
+    except Exception:
+        return None
+
+
+@app.route('/api/battery', methods=['GET'])
+def get_battery():
+    """
+    Return battery state from the BQ25820 charger IC (I2C 0x6B).
+
+    Response:
+      voltage_v    — VBAT in volts
+      current_ma   — IBAT in mA (+ve = charging, -ve = discharging)
+      vsys_v       — system rail voltage
+      percent      — 0–100 estimate based on BATTERY_MIN_V / BATTERY_MAX_V
+      status       — "ok" | "low" (<25 %) | "critical" (<10 %) | "unknown"
+      charge_stat  — "not_charging" | "trickle" | "pre_charge" | "fast_charge" | "taper_charge"
+      power_good   — true if a valid input source (charger) is connected
+      source       — "bq25820@0x6b"
+    """
+    data = _bq25820_read()
+    if data and data['vbat_v'] > 0.1:
+        v   = data['vbat_v']
+        pct = int(min(100, max(0,
+            (v - BATTERY_MIN_V) / (BATTERY_MAX_V - BATTERY_MIN_V) * 100)))
+        status = 'critical' if pct < 10 else 'low' if pct < 25 else 'ok'
+        return jsonify({
+            'voltage_v':   v,
+            'current_ma':  data['ibat_ma'],
+            'vsys_v':      data['vsys_v'],
+            'percent':     pct,
+            'status':      status,
+            'charge_stat': data['charge_stat'],
+            'power_good':  data['power_good'],
+            'source':      'bq25820@0x6b',
+        })
+
+    return jsonify({
+        'voltage_v':   None,
+        'current_ma':  None,
+        'vsys_v':      None,
+        'percent':     None,
+        'status':      'unknown',
+        'charge_stat': None,
+        'power_good':  None,
+        'source':      'unavailable',
     })
 
 

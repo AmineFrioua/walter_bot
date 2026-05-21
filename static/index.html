@@ -41,6 +41,41 @@ header { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .card:hover svg { color: #60a5fa; }
 .card-title { font-size: 0.95rem; font-weight: 700; }
 .card-desc  { font-size: 0.72rem; color: #334155; text-align: center; line-height: 1.5; }
+
+/* Battery widget */
+.battery-widget {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 18px; background: #13151f;
+  border: 1px solid #1a1d2e; border-radius: 12px;
+  width: 100%; max-width: 620px;
+}
+.batt-icon { position: relative; width: 30px; height: 16px; flex-shrink: 0; }
+.batt-body {
+  width: 26px; height: 16px; border: 2px solid #334155;
+  border-radius: 3px; overflow: hidden; position: relative;
+}
+.batt-fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: #22c55e; transition: width .4s, background .4s;
+}
+.batt-fill.low      { background: #f59e0b; }
+.batt-fill.critical { background: #ef4444; }
+.batt-tip {
+  position: absolute; right: -5px; top: 50%;
+  transform: translateY(-50%);
+  width: 3px; height: 8px;
+  background: #334155; border-radius: 0 2px 2px 0;
+}
+.batt-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.batt-pct  { font-size: .88rem; font-weight: 700; color: #e2e8f0; }
+.batt-pct.low      { color: #f59e0b; }
+.batt-pct.critical { color: #ef4444; }
+.batt-detail { font-size: .65rem; font-family: monospace; color: #475569; }
+.batt-bar-wrap { flex: 1; height: 4px; background: #1a1d2e; border-radius: 2px; overflow: hidden; align-self: center; }
+.batt-bar { height: 100%; background: #22c55e; border-radius: 2px; transition: width .4s, background .4s; width: 0%; }
+.batt-bar.low      { background: #f59e0b; }
+.batt-bar.critical { background: #ef4444; }
+
 @media (max-width: 640px) {
   body { padding: 20px 16px; gap: 24px; }
   .grid { grid-template-columns: repeat(2, 1fr); max-width: 100%; gap: 12px; }
@@ -123,6 +158,21 @@ header { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 
 </div>
 
+<!-- Battery widget -->
+<div class="battery-widget" id="batt-widget">
+  <div class="batt-icon">
+    <div class="batt-body"><div class="batt-fill" id="batt-fill"></div></div>
+    <div class="batt-tip"></div>
+  </div>
+  <div class="batt-info">
+    <span class="batt-pct" id="batt-pct">Battery —</span>
+    <span class="batt-detail" id="batt-detail">checking…</span>
+  </div>
+  <div class="batt-bar-wrap">
+    <div class="batt-bar" id="batt-bar"></div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/roslib@1/build/roslib.min.js"></script>
 <script>
 const ros = new ROSLIB.Ros({ url: `ws://${location.hostname}:9090` });
@@ -138,6 +188,53 @@ ros.on('error', () => {
   document.getElementById('ros-dot').className = 'ros-dot err';
   document.getElementById('ros-label').textContent = 'ROS Error';
 });
+
+// ── Battery polling ───────────────────────────────────────────────────────────
+function updateBattery(d) {
+  const pctEl    = document.getElementById('batt-pct');
+  const detailEl = document.getElementById('batt-detail');
+  const fillEl   = document.getElementById('batt-fill');
+  const barEl    = document.getElementById('batt-bar');
+
+  const cls = d.status === 'critical' ? 'critical' : d.status === 'low' ? 'low' : '';
+
+  if (d.percent !== null) {
+    const w = d.percent + '%';
+    pctEl.textContent  = d.percent + '%';
+    fillEl.style.width = w;
+    barEl.style.width  = w;
+  } else {
+    pctEl.textContent  = 'Battery —';
+    fillEl.style.width = '0%';
+    barEl.style.width  = '0%';
+  }
+
+  pctEl.className  = 'batt-pct ' + cls;
+  fillEl.className = 'batt-fill ' + cls;
+  barEl.className  = 'batt-bar ' + cls;
+
+  const parts = [];
+  if (d.voltage_v  !== null) parts.push(d.voltage_v.toFixed(2) + ' V');
+  if (d.current_ma !== null) {
+    const sign = d.current_ma >= 0 ? '+' : '';
+    parts.push(sign + d.current_ma.toFixed(0) + ' mA');
+  }
+  if (d.charge_stat) parts.push(d.charge_stat.replace(/_/g, ' '));
+  if (d.power_good  === true)  parts.push('⚡ charging');
+  if (d.power_good  === false) parts.push('on battery');
+  detailEl.textContent = parts.join('  ·  ') || 'unavailable';
+}
+
+async function pollBattery() {
+  try {
+    const r = await fetch('/api/battery');
+    updateBattery(await r.json());
+  } catch (e) {
+    document.getElementById('batt-detail').textContent = 'unavailable';
+  }
+}
+pollBattery();
+setInterval(pollBattery, 30000);
 </script>
 </body>
 </html>
