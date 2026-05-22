@@ -34,8 +34,8 @@ from sensor_msgs.msg import Imu
 # ── Test parameters ────────────────────────────────────────────────────────────
 TARGET_DIST  = 1.0    # metres per leg
 TARGET_ANGLE = math.pi  # 180°
-LIN_SPEED    = 0.08   # m/s  — slow for accuracy
-ANG_SPEED    = 0.20   # rad/s — slow for accuracy
+LIN_SPEED    = 0.04   # m/s  — slow for accuracy
+ANG_SPEED    = 0.02   # rad/s — slow for accuracy
 CALIB_S      = 5.0    # seconds of stationary data for gyro-bias estimate
 SETTLE_S     = 0.5    # pause between phases to let the robot fully stop
 CTRL_HZ      = 20     # cmd_vel publish rate (Hz)
