@@ -67,8 +67,8 @@ from sensor_msgs.msg import Imu
 
 
 # ── Test parameters ─────────────────────────────────────────────────────────────
-TARGET_DIST    = 1.0        # metres per leg
-TARGET_ANGLE   = math.pi    # 180°
+TARGET_DIST    = 1.0        # metres per leg (TRUE physical metres)
+TARGET_ANGLE   = math.pi    # 180° physical
 
 LIN_SPEED      = 0.06       # m/s  cruise speed
 LIN_MIN        = 0.03       # m/s  minimum speed in slow-down zone
@@ -77,6 +77,13 @@ LIN_RAMP_DIST  = 0.20       # m    start proportional slow-down this far before 
 ANG_SPEED      = 0.15       # rad/s  cruise angular speed
 ANG_MIN        = 0.05       # rad/s  minimum angular speed in slow-down zone
 ANG_RAMP_RAD   = 0.35       # rad    ~20° — start slow-down before target
+
+# ── Sensor scaling (hardware compensation) ──────────────────────────────────────
+# The IMU on this robot is mounted vertically — the gyro Z axis used for
+# yaw integration reports rotation at 2× the actual physical rate.  To make
+# the robot physically turn 180°, the integrated _yaw_accum must reach 2π.
+# Compensation:  YAW_SCALE = 2.0  (true_radians = _yaw_accum / YAW_SCALE)
+YAW_SCALE      = 2.0
 
 CALIB_S        = 5.0        # seconds of stationary IMU data
 SETTLE_S       = 0.8        # pause between phases (s)
@@ -152,7 +159,7 @@ class DriftTest(Node):
             bias_gz=None, sigma_gz=None, n_calib=0,
             bias_ax=None, sigma_ax=None,
             fwd1_imu=None,  fwd1_odom=None,  fwd1_dt=None,
-            turn=None,                        turn_dt=None,
+            turn=None,      turn_raw=None,   turn_dt=None,
             fwd2_imu=None,  fwd2_odom=None,  fwd2_dt=None,
             dx=None, dy=None, dheading=None,
         )
@@ -178,9 +185,10 @@ class DriftTest(Node):
         print("  WALTER DRIFT TEST  (IMU distance)")
         print(f"  {datetime.now():%Y-%m-%d  %H:%M:%S}")
         print(f"{'─'*64}")
-        print(f"  Target          : {TARGET_DIST} m × 2 legs  |  180° turn")
+        print(f"  Target          : {TARGET_DIST} m × 2 legs  |  180° turn (physical)")
         print(f"  Cruise speed    : {LIN_SPEED} m/s  /  {ANG_SPEED} rad/s")
         print(f"  Slow-down zone  : last {LIN_RAMP_DIST} m  /  last {math.degrees(ANG_RAMP_RAD):.0f}°")
+        print(f"  Yaw scaling     : ×{YAW_SCALE}  (vertical IMU — raw gyro reports {YAW_SCALE}× actual)")
         print(f"  Distance source : IMU linear_acceleration.{axis_name} (double-integrated)")
         print(f"  Odom            : logged for comparison only")
         print(f"  CSV log         : {self._csv_path}")
@@ -298,33 +306,38 @@ class DriftTest(Node):
 
         # ── 180° rotation ──────────────────────────────────────────────────────
         elif self._state == self._TURN:
-            a         = abs(self._yaw_accum)
-            remaining = TARGET_ANGLE - a
+            # IMU is mounted vertically: _yaw_accum reports YAW_SCALE × actual.
+            # Convert to true radians before comparing against TARGET_ANGLE.
+            accum_raw      = abs(self._yaw_accum)              # IMU/odom space
+            turned_actual  = accum_raw / YAW_SCALE             # true radians
+            remaining      = TARGET_ANGLE - turned_actual      # true radians
             if remaining <= 0.0:
                 self._cmd(0.0, 0.0)
-                self._r['turn']    = self._yaw_accum
-                self._r['turn_dt'] = time.monotonic() - self._phase_t0
+                self._r['turn']    = self._yaw_accum / YAW_SCALE   # store TRUE rad
+                self._r['turn_raw'] = self._yaw_accum              # for debugging
+                self._r['turn_dt']  = time.monotonic() - self._phase_t0
                 p = self._odom.pose.pose.position if self._odom else None
-                print(f"\n  ✓ Turn done   IMU={math.degrees(self._yaw_accum):.2f}°  "
-                      f"Δ={math.degrees(self._yaw_accum) - 180.0:+.2f}°  "
+                print(f"\n  ✓ Turn done   actual={math.degrees(turned_actual):.2f}°  "
+                      f"raw={math.degrees(accum_raw):.2f}°  "
+                      f"Δ={math.degrees(turned_actual) - 180.0:+.2f}°  "
                       f"t={self._r['turn_dt']:.1f} s")
                 if p:
                     print(f"    end pose  x={p.x:.4f}  y={p.y:.4f}  "
                           f"yaw(odom)={odom_yaw:.2f}°  "
-                          f"yaw(IMU)={math.degrees(self._yaw_accum):.2f}°")
+                          f"yaw(IMU actual)={math.degrees(turned_actual):.2f}°")
                 self._write_csv(t_s, odom_d, remaining, 0.0, 0.0)
                 self._settle_to(self._FWD2)
                 return
-            # Log every 45° milestone
-            milestone = int(math.degrees(a) / 45)
+            # Log every 45° milestone (of actual rotation)
+            milestone = int(math.degrees(turned_actual) / 45)
             if not hasattr(self, '_turn_milestone') or milestone > self._turn_milestone:
                 self._turn_milestone = milestone
                 gz_corr = self._gz_raw - self._bias_gz
-                print(f"\n  [IMU] {math.degrees(a):.1f}°  "
-                      f"gz={self._gz_raw:+.5f}  corr={gz_corr:+.5f}  "
-                      f"accum={math.degrees(self._yaw_accum):.2f}°")
+                print(f"\n  [IMU] actual={math.degrees(turned_actual):.1f}°  "
+                      f"(raw={math.degrees(accum_raw):.1f}°)  "
+                      f"gz={self._gz_raw:+.5f}  corr={gz_corr:+.5f}")
             ang = self._ramp(remaining, ANG_RAMP_RAD, ANG_MIN, ANG_SPEED)
-            print(f"  → turn  {math.degrees(a):.1f}°/{math.degrees(TARGET_ANGLE):.0f}°  "
+            print(f"  → turn  {math.degrees(turned_actual):.1f}°/{math.degrees(TARGET_ANGLE):.0f}°  "
                   f"remain={math.degrees(remaining):.1f}°  "
                   f"w={ang:.3f} r/s    ", end='\r', flush=True)
             self._cmd(0.0, ang)
@@ -557,9 +570,11 @@ class DriftTest(Node):
 
         print(f"\n  ── PHASE 2  Rotate 180° ──────────────────────────────────────")
         if r['turn'] is not None:
-            deg = math.degrees(r['turn'])
-            row("Commanded",           "180.00°")
-            row("Actual  — IMU gyro",  f"{deg:.2f}°  (error {deg - 180.0:+.2f}°)")
+            deg     = math.degrees(r['turn'])          # already true / YAW_SCALE
+            deg_raw = math.degrees(r.get('turn_raw', r['turn'] * YAW_SCALE))
+            row("Commanded (physical)",  "180.00°")
+            row("Actual   (physical)",   f"{deg:.2f}°  (error {deg - 180.0:+.2f}°)")
+            row("Actual   (IMU raw)",    f"{deg_raw:.2f}°  [÷{YAW_SCALE} = {deg:.2f}°]")
             row("Time",                f"{r['turn_dt']:.2f} s")
         else:
             row("Status", "not completed")

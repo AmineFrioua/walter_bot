@@ -19,6 +19,15 @@ Flow
   4. Drift report printed automatically.
 
 Ctrl+C anywhere  →  emergency stop + partial report.
+
+Hardware compensation (see SCALING section below)
+  • Robot's IMU is mounted vertically — odom yaw over-reports rotation by 2×.
+    To physically rotate 180° we must turn until odom-yaw has changed by 360°.
+    Compensation:  YAW_SCALE  = 2.0
+  • Wheel-encoder odom under-reports linear distance by ~10×.
+    All distances reported in the script are scaled up so the user sees TRUE
+    metres travelled, not the smaller odom-internal value.
+    Compensation:  DIST_SCALE = 10.0
 """
 
 import math
@@ -37,10 +46,10 @@ from nav_msgs.msg import Odometry
 
 
 # ── Speed levels ──────────────────────────────────────────────────────────────
-LIN_SPEEDS = {'l': 0.02, 'm': 0.04, 'h': 0.06}   # m/s
-ANG_SPEEDS = {'l': 0.01, 'm': 0.03, 'h': 0.06}   # rad/s
+LIN_SPEEDS = {'l': 0.02, 'm': 0.04, 'h': 0.06}   # m/s  (commanded — real units)
+ANG_SPEEDS = {'l': 0.01, 'm': 0.03, 'h': 0.06}   # rad/s (commanded — real units)
 
-# Deceleration zones
+# Deceleration zones (in TRUE physical units)
 LIN_RAMP_DIST  = 0.12    # m    — ramp speed over this distance before stopping
 LIN_MIN        = 0.01    # m/s  — minimum speed during ramp (prevents stall)
 ANG_RAMP_RAD   = 0.25    # rad  — ramp angular speed this many rad before 180°
@@ -48,6 +57,26 @@ ANG_MIN        = 0.005   # rad/s
 
 SETTLE_S  = 0.6          # pause at each stop before next phase
 CTRL_HZ   = 20           # cmd_vel rate
+
+
+# ── SCALING ───────────────────────────────────────────────────────────────────
+# These constants compensate for hardware quirks on THIS robot.  Re-measure
+# them if you change the IMU mount or recalibrate the wheel encoders.
+#
+# YAW_SCALE  — how many "odom radians" the robot reports per actual radian of
+#              physical rotation.  Vertical IMU mount makes this 2.0 (robot
+#              physically rotates π but odom reports 2π).
+#
+# DIST_SCALE — how many TRUE metres the robot actually travels per metre of
+#              odom distance.  Encoder under-reporting makes this 10.0
+#              (robot physically moves 1 m but odom says 0.1 m).
+#
+# In the rest of this file:
+#   _dist_from()  returns TRUE metres  (odom × DIST_SCALE)
+#   _turn_accum   is in odom-yaw space — we compare to (π × YAW_SCALE) for
+#                 the stop condition, and divide by YAW_SCALE for display.
+YAW_SCALE  = 2.0
+DIST_SCALE = 10.0
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -58,6 +87,7 @@ def _ramp(remaining: float, zone: float, v_min: float, v_max: float) -> float:
     return max(v_min, v_max * (remaining / zone))
 
 def _yaw(q) -> float:
+    """Yaw from quaternion — returned in ODOM-yaw radians (NOT scaled)."""
     return math.atan2(2.0 * (q.w * q.z + q.x * q.y),
                       1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
@@ -94,45 +124,52 @@ class ForwardReturn(Node):
         self._odom        = None
         self._odom_ready  = False
 
-        # Phase-start snapshots
+        # Phase-start snapshots (raw odom x/y — NOT scaled)
         self._fwd_x  = self._fwd_y  = None   # forward leg start
         self._slow_x = self._slow_y = None   # position when ENTER pressed
         self._ret_x  = self._ret_y  = None   # return leg start
-        self._turn_yaw_start = None           # yaw at start of turn
+
+        # Yaw integration during TURN — accumulator avoids the ±π wrap that
+        # bit the previous version (180° in odom-space is reachable when the
+        # robot has only physically turned 90° — see YAW_SCALE).
+        self._turn_yaw_prev = None      # previous odom yaw
+        self._turn_accum    = 0.0       # accumulated odom-yaw rotation (rad)
 
         # State machine
         self._state      = self._FWD
         self._settle_t0  = None
         self._next_state = None
 
-        # Results
-        self._dist_out   = 0.0    # outbound distance at stop
-        self._dist_ret   = 0.0    # return distance covered
+        # Results (all in TRUE physical units)
+        self._dist_out   = 0.0    # outbound distance (m, true)
+        self._dist_ret   = 0.0    # return distance covered (m, true)
         self._r = dict(
             dist_out=None, dist_ret=None,
-            turn_deg=None,
+            turn_deg=None, turn_odom_deg=None,
             dx=None, dy=None, dheading=None,
         )
 
-        # Keyboard (set cbreak so we get each keypress immediately)
+        # Keyboard
         self._old_term = None
         try:
             self._old_term = termios.tcgetattr(sys.stdin.fileno())
             tty.setcbreak(sys.stdin.fileno())
         except Exception:
-            pass   # not a real TTY (e.g. piped input) — fall back gracefully
+            pass
 
         # Banner
-        eta_turn = math.degrees(math.pi) / math.degrees(self._ang)
-        print(f"\n{'─'*60}")
+        eta_turn = math.pi / self._ang   # seconds to physically turn 180°
+        print(f"\n{'─'*64}")
         print("  WALTER FORWARD-RETURN")
         print(f"  {datetime.now():%Y-%m-%d  %H:%M:%S}")
-        print(f"{'─'*60}")
-        print(f"  Speed level   : {speed_level.upper()}")
-        print(f"  Linear speed  : {self._lin} m/s")
-        print(f"  Angular speed : {self._ang} rad/s  "
-              f"(180° ≈ {eta_turn:.0f} s)")
-        print(f"{'─'*60}")
+        print(f"{'─'*64}")
+        print(f"  Speed level    : {speed_level.upper()}")
+        print(f"  Linear speed   : {self._lin} m/s")
+        print(f"  Angular speed  : {self._ang} rad/s  "
+              f"(180° physical ≈ {eta_turn:.0f} s)")
+        print(f"  Scaling        : YAW × {YAW_SCALE}   DIST × {DIST_SCALE}")
+        print(f"                   (vertical IMU + encoder under-report)")
+        print(f"{'─'*64}")
         print(f"\n● Waiting for odometry …")
 
     # ── Odom callback ──────────────────────────────────────────────────────────
@@ -141,9 +178,8 @@ class ForwardReturn(Node):
         self._odom = msg
         if not self._odom_ready:
             p = msg.pose.pose.position
-            # Capture global start as floats
-            self._r['_gx']  = p.x
-            self._r['_gy']  = p.y
+            self._r['_gx']   = p.x
+            self._r['_gy']   = p.y
             self._r['_gyaw'] = _yaw(msg.pose.pose.orientation)
             self._odom_ready = True
 
@@ -153,7 +189,6 @@ class ForwardReturn(Node):
         if self._state == self._DONE:
             return
 
-        # Wait for first odom message
         if not self._odom_ready:
             return
 
@@ -162,37 +197,33 @@ class ForwardReturn(Node):
             p = self._odom.pose.pose.position
             self._fwd_x = p.x
             self._fwd_y = p.y
-            print(f"\n  [ready]  x={p.x:.4f}  y={p.y:.4f}  "
-                  f"yaw={math.degrees(_yaw(self._odom.pose.pose.orientation)):.1f}°")
+            yaw_deg = math.degrees(_yaw(self._odom.pose.pose.orientation))
+            print(f"\n  [ready]  x={p.x:.4f}  y={p.y:.4f}  yaw={yaw_deg:.1f}°")
             print(f"\n● Driving forward at {self._lin} m/s  —  press ENTER to return\n")
 
-        # Check for keypress
         key = self._read_key()
-
         p   = self._odom.pose.pose.position
         yaw = _yaw(self._odom.pose.pose.orientation)
 
         # ── FORWARD ────────────────────────────────────────────────────────────
         if self._state == self._FWD:
-            d = self._dist_from(self._fwd_x, self._fwd_y)
-            print(f"  → {d:.3f} m        ", end='\r', flush=True)
+            d = self._dist_from(self._fwd_x, self._fwd_y)   # TRUE metres
+            print(f"  → {d:.3f} m            ", end='\r', flush=True)
             if key:
-                # User pressed ENTER — start decelerating
                 self._slow_x = p.x
                 self._slow_y = p.y
-                self._dist_out = d    # will be updated at actual stop
+                self._dist_out = d
                 self._state = self._SLOWING
                 print(f"\n  [ENTER] decelerating at {d:.3f} m …")
             else:
                 self._cmd(self._lin, 0.0)
 
-        # ── SLOWING (decelerate to stop) ────────────────────────────────────────
+        # ── SLOWING (decelerate to stop) ───────────────────────────────────────
         elif self._state == self._SLOWING:
             d_since_trigger = self._dist_from(self._slow_x, self._slow_y)
             remaining = LIN_RAMP_DIST - d_since_trigger
             if remaining <= 0.0:
                 self._cmd(0.0, 0.0)
-                # Record actual outbound distance
                 self._dist_out = self._dist_from(self._fwd_x, self._fwd_y)
                 self._r['dist_out'] = self._dist_out
                 print(f"  ✓ Stopped  outbound = {self._dist_out:.4f} m")
@@ -200,7 +231,8 @@ class ForwardReturn(Node):
             else:
                 speed = _ramp(remaining, LIN_RAMP_DIST, LIN_MIN, self._lin)
                 self._cmd(speed, 0.0)
-                print(f"  → slowing {speed:.3f} m/s …  ", end='\r', flush=True)
+                print(f"  → slowing {speed:.3f} m/s  "
+                      f"remain={remaining:.3f} m         ", end='\r', flush=True)
 
         # ── SETTLE ─────────────────────────────────────────────────────────────
         elif self._state == self._SETTLE:
@@ -210,38 +242,53 @@ class ForwardReturn(Node):
 
         # ── TURN ───────────────────────────────────────────────────────────────
         elif self._state == self._TURN:
-            if self._turn_yaw_start is None:
-                self._turn_yaw_start = yaw   # captured on first tick of TURN
-                eta = math.pi / self._ang
+            # First tick of TURN: initialise accumulator
+            if self._turn_yaw_prev is None:
+                self._turn_yaw_prev = yaw
+                self._turn_accum    = 0.0
+                eta = math.pi / self._ang   # seconds to physically turn 180°
                 print(f"\n  [turn]  start yaw={math.degrees(yaw):.1f}°  "
+                      f"target 180° physical  "
+                      f"(= {math.degrees(math.pi * YAW_SCALE):.0f}° in odom yaw)  "
                       f"ETA ≈ {eta:.0f} s")
 
-            turned    = abs(_angle_diff(yaw, self._turn_yaw_start))
-            remaining = math.pi - turned
+            # Accumulate small per-tick deltas (always within [−π, π] so no
+            # wrap problem even when total odom rotation exceeds π)
+            dy = _angle_diff(yaw, self._turn_yaw_prev)
+            self._turn_accum += dy
+            self._turn_yaw_prev = yaw
+
+            turned_odom   = abs(self._turn_accum)
+            turned_actual = turned_odom / YAW_SCALE      # true radians
+            remaining     = math.pi - turned_actual
+
             if remaining <= 0.0:
                 self._cmd(0.0, 0.0)
-                self._r['turn_deg'] = math.degrees(turned)
-                print(f"\n  ✓ Turn done  {math.degrees(turned):.1f}°  "
-                      f"(Δ {math.degrees(turned) - 180.0:+.1f}°)")
+                self._r['turn_deg']      = math.degrees(turned_actual)
+                self._r['turn_odom_deg'] = math.degrees(turned_odom)
+                print(f"\n  ✓ Turn done  actual={math.degrees(turned_actual):.1f}°  "
+                      f"odom={math.degrees(turned_odom):.1f}°  "
+                      f"(Δ {math.degrees(turned_actual) - 180.0:+.1f}°)")
                 self._enter_settle(self._RETURN)
             else:
                 ang = _ramp(remaining, ANG_RAMP_RAD, ANG_MIN, self._ang)
                 self._cmd(0.0, ang)
-                print(f"  → turned {math.degrees(turned):.1f}°  "
-                      f"remain {math.degrees(remaining):.1f}°  "
+                print(f"  → turn  {math.degrees(turned_actual):.1f}°/180°  "
+                      f"(odom {math.degrees(turned_odom):.1f}°/"
+                      f"{math.degrees(math.pi * YAW_SCALE):.0f}°)  "
                       f"w={ang:.4f} r/s    ", end='\r', flush=True)
 
         # ── RETURN ─────────────────────────────────────────────────────────────
         elif self._state == self._RETURN:
-            d         = self._dist_from(self._ret_x, self._ret_y)
+            d         = self._dist_from(self._ret_x, self._ret_y)   # TRUE metres
             remaining = self._dist_out - d
             self._dist_ret = d
 
             if key:
-                # User pressed ENTER again — stop early
                 self._cmd(0.0, 0.0)
                 self._r['dist_ret'] = d
-                print(f"\n  [ENTER] stopped early at {d:.4f} m of {self._dist_out:.4f} m")
+                print(f"\n  [ENTER] stopped early at {d:.4f} m of "
+                      f"{self._dist_out:.4f} m")
                 self._finish(yaw)
                 return
 
@@ -260,10 +307,11 @@ class ForwardReturn(Node):
     # ── Helpers ────────────────────────────────────────────────────────────────
 
     def _dist_from(self, sx, sy) -> float:
+        """Distance in TRUE metres (odom × DIST_SCALE)."""
         if sx is None or self._odom is None:
             return 0.0
         p = self._odom.pose.pose.position
-        return math.hypot(p.x - sx, p.y - sy)
+        return math.hypot(p.x - sx, p.y - sy) * DIST_SCALE
 
     def _cmd(self, lx: float, az: float):
         t = Twist()
@@ -279,7 +327,9 @@ class ForwardReturn(Node):
     def _begin(self, state: str):
         self._state = state
         if state == self._TURN:
-            self._turn_yaw_start = None   # captured on first tick
+            # Reset accumulator state — captured on first TURN tick
+            self._turn_yaw_prev = None
+            self._turn_accum    = 0.0
             print(f"\n● Turning 180° at {self._ang} rad/s …")
         elif state == self._RETURN:
             p = self._odom.pose.pose.position
@@ -298,14 +348,15 @@ class ForwardReturn(Node):
         gyaw = self._r.get('_gyaw')
         if gx is not None and self._odom is not None:
             p = self._odom.pose.pose.position
-            self._r['dx']       = p.x - gx
-            self._r['dy']       = p.y - gy
-            dh = _angle_diff(current_yaw, gyaw)
-            self._r['dheading'] = math.degrees(dh)
+            # Position drift in TRUE metres
+            self._r['dx'] = (p.x - gx) * DIST_SCALE
+            self._r['dy'] = (p.y - gy) * DIST_SCALE
+            # Heading drift in actual degrees (assumes small drift well within ±π/YAW_SCALE)
+            dh_odom = _angle_diff(current_yaw, gyaw)
+            self._r['dheading'] = math.degrees(dh_odom / YAW_SCALE)
         self.print_report()
 
     def _read_key(self) -> bool:
-        """Return True if ENTER or SPACE was pressed since last tick."""
         try:
             if select.select([sys.stdin], [], [], 0.0)[0]:
                 ch = sys.stdin.read(1)
@@ -329,55 +380,59 @@ class ForwardReturn(Node):
 
     def print_report(self, interrupted: bool = False):
         r   = self._r
-        W   = 60
+        W   = 64
         tag = '  [INTERRUPTED]' if interrupted else ''
 
         def row(label, value):
-            print(f"    {label:<28}: {value}")
+            print(f"    {label:<30}: {value}")
 
         print(f"\n{'═'*W}")
         print(f"  FORWARD-RETURN REPORT{tag}")
         print(f"  {datetime.now():%Y-%m-%d  %H:%M:%S}")
         print(f"{'═'*W}")
 
-        print(f"\n  ── SPEED SETTINGS ──────────────────────────────────────")
-        row("Linear speed",        f"{self._lin} m/s")
-        row("Angular speed",       f"{self._ang} rad/s")
+        print(f"\n  ── SPEED SETTINGS ──────────────────────────────────────────")
+        row("Linear speed",            f"{self._lin} m/s")
+        row("Angular speed",           f"{self._ang} rad/s")
+        row("Scaling",                 f"YAW × {YAW_SCALE}   DIST × {DIST_SCALE}")
 
-        print(f"\n  ── OUTBOUND LEG ────────────────────────────────────────")
+        print(f"\n  ── OUTBOUND LEG ────────────────────────────────────────────")
         if r['dist_out'] is not None:
-            row("Distance traveled",   f"{r['dist_out']:.4f} m")
+            row("Distance traveled (true)", f"{r['dist_out']:.4f} m")
         else:
             row("Status", "not completed")
 
-        print(f"\n  ── TURN ────────────────────────────────────────────────")
+        print(f"\n  ── TURN ────────────────────────────────────────────────────")
         if r['turn_deg'] is not None:
             e = r['turn_deg'] - 180.0
-            row("Commanded",           "180.0°")
-            row("Actual (odom yaw)",   f"{r['turn_deg']:.2f}°")
-            row("Error",               f"{e:+.2f}°")
+            row("Commanded (physical)",    "180.00°")
+            row("Actual  (physical)",      f"{r['turn_deg']:.2f}°")
+            row("Actual  (odom-yaw)",      f"{r['turn_odom_deg']:.2f}°  "
+                                            f"[÷{YAW_SCALE} = {r['turn_deg']:.2f}°]")
+            row("Error",                   f"{e:+.2f}°")
         else:
             row("Status", "not completed")
 
-        print(f"\n  ── RETURN LEG ──────────────────────────────────────────")
+        print(f"\n  ── RETURN LEG ──────────────────────────────────────────────")
         if r['dist_ret'] is not None and r['dist_out'] is not None:
             diff = r['dist_ret'] - r['dist_out']
-            row("Target",              f"{r['dist_out']:.4f} m")
-            row("Actual (odom)",       f"{r['dist_ret']:.4f} m")
-            row("Leg error",           f"{diff:+.4f} m  ({diff/r['dist_out']*100:+.2f}%)"
-                                        if r['dist_out'] > 0 else f"{diff:+.4f} m")
+            pct  = (diff / r['dist_out'] * 100) if r['dist_out'] > 0 else 0.0
+            row("Target",                  f"{r['dist_out']:.4f} m")
+            row("Actual (true)",           f"{r['dist_ret']:.4f} m")
+            row("Leg error",               f"{diff:+.4f} m  ({pct:+.2f}%)")
         else:
             row("Status", "not completed")
 
-        print(f"\n  ── DRIFT (final position vs start) ─────────────────────")
+        print(f"\n  ── DRIFT (final position vs start) ─────────────────────────")
         if r.get('dx') is not None:
             drift = math.hypot(r['dx'], r['dy'])
             total = (r['dist_out'] or 0) + (r['dist_ret'] or 0)
             pct   = drift / total * 100 if total > 0 else 0
-            row("ΔX",                  f"{r['dx']:+.4f} m")
-            row("ΔY",                  f"{r['dy']:+.4f} m")
-            row("Position drift",      f"{drift:.4f} m  ({pct:.2f}% of {total:.2f} m)")
-            row("Heading drift",       f"{r['dheading']:+.2f}°")
+            row("ΔX (true)",               f"{r['dx']:+.4f} m")
+            row("ΔY (true)",               f"{r['dy']:+.4f} m")
+            row("Position drift",          f"{drift:.4f} m  "
+                                            f"({pct:.2f}% of {total:.2f} m)")
+            row("Heading drift",           f"{r['dheading']:+.2f}°")
         else:
             row("Status", "not completed")
 
