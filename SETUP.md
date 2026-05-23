@@ -536,17 +536,31 @@ scp <user>@<pi-ip>:/tmp/drift_20260523_142351.csv ~/Downloads/
 
 ### 10.2 `forward_return.py` — interactive
 
-Drive forward at a chosen speed, press ENTER when you want it to turn around and come back the same distance.
+Drive forward at a chosen speed, then either press ENTER or let the robot stop automatically at a target distance.  It then turns 180° and returns the exact same distance.  A full drift report is printed at the end.
+
+**Usage:**
 
 ```bash
+# Manual mode — press ENTER whenever you want it to turn back
 docker exec -it walter_dev bash -c "
   source /opt/ros/humble/setup.bash &&
   cd /ros2_ws &&
   python3 forward_return.py m
 "
+
+# Auto-stop mode — provide a target distance in metres (any positive float)
+docker exec -it walter_dev bash -c "
+  source /opt/ros/humble/setup.bash &&
+  cd /ros2_ws &&
+  python3 forward_return.py l 0.2    # stops at 20 cm
+  python3 forward_return.py m 0.5    # stops at 50 cm
+  python3 forward_return.py h 1.0    # stops at 1 m
+"
 ```
 
-Speed levels (positional argument or interactive prompt):
+If you omit both arguments you get an interactive prompt for level and distance.
+
+**Speed levels:**
 
 | Level | Linear | Angular |
 |---|---|---|
@@ -554,11 +568,48 @@ Speed levels (positional argument or interactive prompt):
 | `m` medium | 0.04 m/s | 0.03 rad/s |
 | `h` high | 0.06 m/s | 0.06 rad/s |
 
-Controls during the run:
-- **ENTER / SPACE** — trigger return (when driving forward) or stop early (during return)
-- **Ctrl+C** — emergency stop + partial report
+**Live display while driving forward:**
 
-The script's docstring documents the hardware compensation constants (`YAW_SCALE = 2.0` for the vertically-mounted IMU, `DIST_SCALE = 10.0` for the wheel-encoder under-report).
+```
+# Auto-stop mode
+→ 0.312 / 0.500 m   heading: +1.8° (left)   remain: 0.188 m
+
+# Manual mode
+→ 0.312 m   heading: +1.8° (left)   (press ENTER)
+```
+
+Sign convention: `+` = veering left, `−` = veering right.  Label reads `straight` when deviation is < 0.5°.
+
+**Controls:**
+- **ENTER / SPACE** — trigger return immediately (manual mode only)
+- **Ctrl+C** — emergency stop, robot halts in place
+
+**Sample report:**
+
+```
+  ──────────────────────────────────────────
+  ✓ DONE
+     Outbound       : 0.500 m
+     Return         : 0.503 m
+     Final position : drift 0.021 m  (Δx=+0.018, Δy=-0.011)
+
+  Heading-drift while driving straight
+     Calibrated target  :  0.0°   (perfect straight line)
+     At ENTER (final)   : +1.8°
+     Peak during run    :  2.3°
+     Assessment         : ~ acceptable (< 5°)
+  ──────────────────────────────────────────
+```
+
+Assessment thresholds:
+
+| Peak heading drift | Verdict |
+|---|---|
+| < 2° | ✓ excellent |
+| 2° – 5° | ~ acceptable |
+| ≥ 5° | ✗ high drift — tune angular PID or wheel trim |
+
+Hardware note: `YAW_SCALE = 2.0` compensates for the vertically-mounted IMU (odom yaw over-reports by 2×).  This affects both the 180° turn and the heading-drift calculation.
 
 ---
 
@@ -851,8 +902,8 @@ All on port 5000 (`web_server.py` running on the Pi host):
 | `use_sim_time` error in Nav2 | A node has `use_sim_time: True` | Set `use_sim_time: False` everywhere in `config/nav2_params.yaml` |
 | Scan dots misaligned from walls | Odometry drift on long runs | Expected — re-save the map after repositioning the robot at the origin |
 | Docker container already exists | Stale container from a crash | `docker rm -f walter_dev` (`run_walter.sh` does this automatically) |
-| 180° turn results in 90° physical | Vertical IMU mount | `forward_return.py` already compensates with `YAW_SCALE = 2.0`; verify by reading the report |
-| `forward_return.py` says it travelled 0.1 m but tape measure says 1 m | Wheel-encoder under-reporting | `DIST_SCALE = 10.0` in the script already compensates; re-measure with `forward_return.py` |
+| 180° turn results in 90° physical | Vertical IMU mount | `forward_return.py` compensates with `YAW_SCALE = 2.0`; the report shows both odom degrees and physical degrees so you can verify |
+| Heading drift ≥ 5° on a straight run | Wheel imbalance or angular PID gain | Run `forward_return.py l 0.5` a few times and compare peak drift; adjust motor trim or PID if consistently high |
 | Foxglove sees no topics | foxglove_bridge not running or whitelist wrong | `docker exec walter_dev tail /tmp/foxglove_bridge.log`; verify it started |
 
 ---
