@@ -93,7 +93,17 @@ class ForwardReturn(Node):
         self._ret_x0 = self._ret_y0 = None     # where return leg started
         self._dist_out = 0.0                   # distance recorded at ENTER
 
+        # Heading-drift tracking during FORWARD phase
+        # We accumulate odom-yaw deltas (same wrap-safe approach as TURNING)
+        # and divide by YAW_SCALE to recover the physical heading deviation.
+        # Calibrated target is 0° — any drift means the robot veers.
+        self._fwd_yaw_prev      = None  # last raw odom yaw while driving forward
+        self._fwd_yaw_accum     = 0.0  # accumulated odom-yaw change since start
+        self._fwd_drift_max     = 0.0  # peak |physical| heading drift seen
+        self._fwd_drift_at_stop = 0.0  # heading drift when ENTER was pressed
+
         # Yaw accumulator (raw odom-yaw radians, includes 2× scaling)
+        # Used only during TURNING phase.
         self._yaw_prev  = None
         self._yaw_accum = 0.0
 
@@ -149,14 +159,38 @@ class ForwardReturn(Node):
         # ── FORWARD — drive until user hits ENTER ────────────────────────
         if self._state == self.FORWARD:
             d = math.hypot(p.x - self._fwd_x0, p.y - self._fwd_y0)
-            print(f"  → forward  {d:.3f} m   (press ENTER)       ",
+
+            # ── Heading drift (should be 0° for a perfectly straight run) ──
+            # Initialise yaw reference on the first forward tick.
+            if self._fwd_yaw_prev is None:
+                self._fwd_yaw_prev  = yaw
+                self._fwd_yaw_accum = 0.0
+
+            self._fwd_yaw_accum += _angle_diff(yaw, self._fwd_yaw_prev)
+            self._fwd_yaw_prev   = yaw
+
+            # Physical drift = odom drift ÷ YAW_SCALE (IMU vertical mount)
+            drift_physical_deg = math.degrees(self._fwd_yaw_accum / YAW_SCALE)
+            self._fwd_drift_max = max(self._fwd_drift_max,
+                                      abs(drift_physical_deg))
+
+            # Drift direction label makes it intuitive to read
+            direction = ("straight" if abs(drift_physical_deg) < 0.5
+                         else ("left" if drift_physical_deg > 0 else "right"))
+
+            print(f"  → {d:.3f} m   heading: {drift_physical_deg:+.1f}°"
+                  f" ({direction})   (press ENTER)        ",
                   end='\r', flush=True)
+
             if self._read_enter():
-                self._dist_out = d
+                self._dist_out     = d
+                self._fwd_drift_at_stop = drift_physical_deg   # snapshot
                 self._cmd(0.0, 0.0)
                 self._pause_t0 = time.monotonic()
                 self._state    = self.PAUSE_BEFORE_TURN
-                print(f"\n  [ENTER]  outbound = {d:.3f} m  —  stopping before turn")
+                print(f"\n  [ENTER]  outbound = {d:.3f} m  "
+                      f"heading drift = {drift_physical_deg:+.1f}°  "
+                      f"—  stopping before turn")
             else:
                 self._cmd(self._lin, 0.0)
             return
@@ -220,13 +254,34 @@ class ForwardReturn(Node):
     def _report(self, p, dist_ret):
         dx = p.x - self._fwd_x0
         dy = p.y - self._fwd_y0
-        drift = math.hypot(dx, dy)
+        pos_drift = math.hypot(dx, dy)
+
+        # Heading-drift verdict
+        # A well-calibrated robot driving straight should show < 2° of heading
+        # drift over the outbound leg.  Beyond that the robot is veering and
+        # the angular gains / wheel balance likely need tuning.
+        d_stop = self._fwd_drift_at_stop
+        d_max  = self._fwd_drift_max
+        if d_max < 2.0:
+            verdict = "✓ excellent  (< 2°)"
+        elif d_max < 5.0:
+            verdict = "~ acceptable (< 5°)"
+        else:
+            verdict = "✗ high drift (≥ 5°) — consider angular PID / wheel trim"
+
         print()
         print(f"  ──────────────────────────────────────────")
         print(f"  ✓ DONE")
-        print(f"     Outbound     : {self._dist_out:.3f} m")
-        print(f"     Return       : {dist_ret:.3f} m")
-        print(f"     Final drift  : {drift:.3f} m  (Δx={dx:+.3f}, Δy={dy:+.3f})")
+        print(f"     Outbound       : {self._dist_out:.3f} m")
+        print(f"     Return         : {dist_ret:.3f} m")
+        print(f"     Final position : drift {pos_drift:.3f} m  "
+              f"(Δx={dx:+.3f}, Δy={dy:+.3f})")
+        print()
+        print(f"  Heading-drift while driving straight")
+        print(f"     Calibrated target  :  0.0°   (perfect straight line)")
+        print(f"     At ENTER (final)   : {d_stop:+.1f}°")
+        print(f"     Peak during run    : {d_max:.1f}°")
+        print(f"     Assessment         : {verdict}")
         print(f"  ──────────────────────────────────────────\n")
 
     # ── Cleanup ───────────────────────────────────────────────────────────
