@@ -1,6 +1,21 @@
 # Walter — Autonomous Delivery Robot
 
-Walter is a ROS 2 Humble-powered differential-drive robot built for autonomous room mapping and table delivery. It runs on a Raspberry Pi 4 with an RPLidar A1M8 (UART), IMU (I2C), and I2C motor controller. A single command boots everything.
+Walter is a ROS 2 Humble differential-drive robot built for **autonomous room mapping and table delivery**. It runs entirely on a Raspberry Pi 4: LiDAR over UART, IMU and motor controller over I²C, a Flask web UI on the Pi host, and the full ROS 2 stack inside a single Docker container.
+
+A single command boots the whole thing — there are no external dependencies, no cloud services, and no manual `roslaunch` invocations.
+
+> **Looking for how to use it?** This file describes **what Walter is** and **how it's wired together**. For step-by-step procedures (mapping, navigation, drift tests, calibration, etc.) see **[SETUP.md](SETUP.md)**.
+
+---
+
+## What Walter does
+
+| In a nutshell | |
+|---|---|
+| **Mapping** | Drive it around a room manually, watch the occupancy grid build live in the browser, save the map. |
+| **Navigation** | Place named tables and zones on the saved map, then tap a button — Walter plans a path, drives there, waits, comes back. |
+| **Drift testing** | Automated and interactive scripts for measuring sensor / encoder accuracy. |
+| **Hardware monitoring** | Live battery (BQ25820), LiDAR, IMU, odom and load-cell readouts in the UI. |
 
 ---
 
@@ -9,211 +24,90 @@ Walter is a ROS 2 Humble-powered differential-drive robot built for autonomous r
 ```mermaid
 graph TD
     User((User)) -->|Browser| WebUI[Web UI :5000]
-    WebUI -->|REST API| Flask[web_server.py :5000]
-    WebUI -->|roslibjs WS| RosBridge[rosbridge :9090]
+    Foxglove((Foxglove Studio)) -->|WS :8765| FBridge[foxglove_bridge]
+
+    WebUI -->|REST| Flask[web_server.py :5000]
+    WebUI -->|roslibjs WS :9090| RBridge[rosbridge]
 
     subgraph Docker [Docker — ROS 2 Humble]
-        RosBridge
+        RBridge
+        FBridge
 
-        subgraph MappingMode [Mapping mode]
-            SLAM[SLAM Toolbox] -->|/map| RosBridge
+        subgraph MappingMode [Mapping mode — SLAM only]
+            SLAM[SLAM Toolbox] -->|/map| RBridge
+            SLAM -->|/map| FBridge
         end
 
-        subgraph NavigateMode [Navigate mode]
-            MapServer[map_server] -->|/map| RosBridge
-            AMCL[AMCL] -->|/amcl_pose| RosBridge
+        subgraph NavigateMode [Navigate mode — Nav2 only]
+            MapServer[map_server] -->|/map| Nav2
+            AMCL[AMCL] -->|/amcl_pose| Nav2
             Nav2[Nav2 planner + controller]
-            MapServer --> Nav2
-            AMCL --> Nav2
+            MapServer -->|/map| RBridge
         end
 
-        RosBridge -->|goal_pose| Nav2
-        Nav2 -->|cmd_vel| Bridge[bridge_node.py]
-        Bridge -->|odom + TF| SLAM
-        Bridge -->|odom + TF| AMCL
+        RBridge -->|/goal_pose| Nav2
+        Nav2     -->|/cmd_vel| Bridge[bridge_node.py]
+        Bridge   -->|/odom, /tf| SLAM
+        Bridge   -->|/odom, /tf| AMCL
+
         LiDAR[sllidar_node] -->|/scan| Filter[lidar_filter.py]
         Filter -->|/scan_filtered| SLAM
         Filter -->|/scan_filtered| Nav2
+        Filter -->|/scan_filtered| RBridge
+        Filter -->|/scan_filtered| FBridge
+
+        RSP[robot_state_publisher] -->|/tf_static, /robot_description| FBridge
     end
 
     subgraph Pi Host
         Flask
         Waypoints[(waypoints.json)]
+        Battery[BQ25820 via I²C 0x6B] --> Flask
         Flask --- Waypoints
     end
 
     subgraph Hardware
-        Bridge -->|I2C 0x55| Motors[Drive Motors]
-        IMU[LSM6DS IMU 0x6A] -->|I2C| Bridge
+        Bridge -->|I²C 0x55| Motors[Drive Motors]
+        IMU[LSM6DS IMU 0x6A] -->|I²C| Bridge
         RPLidar[RPLidar A1M8] -->|UART /dev/ttyAMA0| LiDAR
     end
 
-    Face[face.html — Robot Screen] -->|rosbridge WS| RosBridge
+    Face[face.html on robot screen] -->|WS| RBridge
 ```
 
-### Two operating modes
+### Two operating modes — mutually exclusive
 
-| Mode | When | What runs | Purpose |
+| Mode | What runs | Purpose |
+|---|---|---|
+| **Mapping** | LiDAR + bridge + SLAM Toolbox | Build the room map manually. SLAM Toolbox accumulates an occupancy grid from filtered LiDAR scans and publishes `/map` every ~8 s. |
+| **Navigate** | LiDAR + bridge + map_server + AMCL + Nav2 | Production. AMCL localises the robot against the saved map, Nav2 plans paths and drives. |
+
+`run_walter.sh` auto-detects which mode to start based on whether `maps/room_map.yaml` exists. **SLAM and Nav2 never run together** — this is intentional; SLAM alone uses enough RAM and CPU on a Pi 4 that running both kills performance.
+
+### Two bridges
+
+| Bridge | Port | Audience | Topic exposure |
 |---|---|---|---|
-| **Mapping** | No saved map found | LiDAR + bridge + SLAM Toolbox only | Build the room map manually |
-| **Navigate** | Saved map exists | LiDAR + bridge + map_server + AMCL + Nav2 | Production — autonomous delivery |
-
-`run_walter.sh` picks the mode automatically. SLAM and Nav2 **never run together** — this is intentional to avoid memory conflicts on the Pi.
-
----
-
-## File Overview
-
-| File | Runs on | Purpose |
-|---|---|---|
-| `run_walter.sh` | Pi host | One-command boot: GPIO → web server → Docker |
-| `start_brain.sh` | Docker | Staged startup for mapping or navigate mode |
-| `bridge_node.py` | Docker | Motors + IMU + odometry at 50 Hz |
-| `lidar_filter.py` | Docker | Blanks mount-obstruction blind spots |
-| `save_map.sh` | Docker | Saves SLAM map to `maps/` |
-| `slam_params.yaml` | Docker | SLAM Toolbox tuning (Pi-optimised) |
-| `config/nav2_params.yaml` | Docker | Nav2 stack config |
-| `web_server.py` | Pi host | Flask REST API + serves static UI on port 5000 |
-| `load_cell_test.py` | Pi host | SPI ADC test + calibration wizard for load cells |
-| `waypoints.json` | Pi host | Named table/zone coordinates (auto-created) |
-| `static/index.html` | Browser | Launcher — links to all tools |
-| `static/map.html` | Browser | Live map view + manual drive + edit during mapping |
-| `static/editor.html` | Browser | Place tables, zones and origin on a saved map |
-| `static/delivery.html` | Browser | Send Walter to a table autonomously |
-| `static/drive.html` | Browser | Keyboard / d-pad teleoperation |
-| `static/face.html` | Robot screen | Animated eyes that react to robot state |
-| `static/logs.html` | Browser | Live sensor gauges — LiDAR, odom, IMU, cmd\_vel |
-
----
-
-## Quick Start
-
-### 1 — One-command boot
-
-```bash
-# On the Pi, from the walter_bot directory:
-./run_walter.sh
-```
-
-- Powers LiDAR via GPIO 17, waits for spin-up
-- Starts `web_server.py` on port 5000 in the background
-- **Auto-detects mode**: if `maps/room_map.yaml` exists → navigate mode, otherwise → mapping mode
-- Launches the Docker container with the appropriate ROS 2 stack
-
-Override the mode explicitly:
-
-```bash
-./run_walter.sh mapping          # force mapping (build a new map)
-./run_walter.sh navigate         # force navigate with room_map
-./run_walter.sh navigate my_map  # navigate with a specific saved map
-```
-
-### 2 — Open the UI
-
-Navigate to `http://<pi-ip>:5000/` — the launcher shows all available tools.
-
-| Page | URL | Use when |
-|---|---|---|
-| Launcher | `/` | Starting point |
-| Map | `/static/map.html` | **Mapping mode** — drive + watch the map build |
-| Editor | `/static/editor.html` | Either mode — place tables and zones |
-| Delivery | `/static/delivery.html` | **Navigate mode** — send Walter to a table |
-| Drive | `/static/drive.html` | Either mode — keyboard / d-pad control |
-| Face | `/static/face.html` | Robot's attached screen (open in new tab) |
-| Logs | `/static/logs.html` | Live sensor data for debugging |
-
-### 3 — Build a map (first time)
-
-1. Start with `./run_walter.sh` — auto-starts in mapping mode since no map exists yet
-2. Open `http://<pi-ip>:5000/static/map.html`
-3. Drive Walter around the room using the d-pad (or Drive page on another tab)
-4. Watch the map build live — LiDAR scan points and obstacle edges appear as you drive
-5. When all walls and obstacles are visible, click **Save Map** in the UI  
-   (Map also auto-saves every 2 minutes and on Ctrl+C)
-6. Restart Walter — it will auto-detect the saved map and start in navigate mode
-
-### 4 — Place tables and zones
-
-1. Start Walter (navigate mode — map already saved)
-2. Open `http://<pi-ip>:5000/static/editor.html`
-3. The saved map appears; click to place waypoints:
-   - **Table** — numbered table with dimensions (width × depth)
-   - **Zone** — named area (kitchen, bar, etc.)
-   - **Origin** — robot home / return position
-4. Drag any marker to reposition; click to edit label/dimensions
-5. Changes save automatically to `waypoints.json`
-
-### 5 — Deliver
-
-1. Open `http://<pi-ip>:5000/static/delivery.html`
-2. Tap a table button, then tap **Send Walter**
-3. Walter navigates autonomously, waits at the table, then returns home
-4. Tap **Cancel** at any time to stop
-
----
-
-## Web UI Pages
-
-### Map (`map.html`)
-Available in mapping mode. Shows the live occupancy grid from SLAM Toolbox with:
-- **LiDAR scan overlay** — real-time point cloud coloured by distance
-- **Obstacle edge detection** — blue highlight on occupied cells adjacent to free space
-- **Frontal distance** — closest point in the ±15° forward arc highlighted orange
-- **Drive tab** — d-pad controller with speed slider
-- **Edit tab** — quick waypoint placement without switching pages
-
-### Editor (`editor.html`)
-Works in both mapping and navigate modes (subscribes to `/map`, published by both SLAM and `map_server`). No SLAM or Nav2 dependency — safe to use in production.
-
-Waypoint schema stored in `waypoints.json`:
-```json
-{
-  "Table 1": { "x": 1.2, "y": -0.5, "theta": 0.0, "label": "Table 1",
-               "type": "table", "number": 1, "width": 0.8, "depth": 0.6 }
-}
-```
-
-### Logs (`logs.html`)
-Live gauges updated via rosbridge:
-- `/scan` — point count, min/max/mean range
-- `/odom` — linear and angular velocity
-- `/imu/data_raw` — linear acceleration X/Y/Z
-- `/cmd_vel` — commanded velocity
-
-### Face (`face.html`)
-Animated robot eyes. Reacts to `/cmd_vel` automatically:
-
-| State | Colour | Trigger |
-|---|---|---|
-| Idle | Blue | No movement |
-| Moving | Orange | Linear velocity |
-| Turning | Purple | Angular velocity only |
-| Arrived | Green (pulsing) | `/walter/face` → `arrived` |
-| Error | Red | `/walter/face` → `error` |
-
-Trigger from any node or the shell:
-```bash
-docker exec -it walter_dev bash -c "
-  source /opt/ros/humble/setup.bash &&
-  ros2 topic pub --once /walter/face std_msgs/String '{data: arrived}'
-"
-```
+| `rosbridge_websocket` | 9090 | Web UI (map.html, drive.html, logs.html, ...) | All topics (the UI needs `/odom`, `/cmd_vel`, `/imu/data_raw` in addition to the 4 user-facing ones) |
+| `foxglove_bridge` | 8765 | Foxglove Studio | **Whitelisted** to only `/scan`, `/scan_filtered`, `/map`, `/tf`, `/tf_static`, `/robot_description` — keeps the panel list clean |
 
 ---
 
 ## ROS 2 Topic Map
 
-| Topic | Type | Published by | Consumed by |
-|---|---|---|---|
-| `/scan` | `LaserScan` | sllidar_node | lidar_filter |
-| `/scan_filtered` | `LaserScan` | lidar_filter | SLAM / Nav2 / UI |
-| `/odom` | `Odometry` | bridge_node | SLAM / AMCL / UI |
-| `/imu/data_raw` | `Imu` | bridge_node | UI |
-| `/map` | `OccupancyGrid` | SLAM (mapping) / map_server (navigate) | Nav2 / UI |
-| `/cmd_vel` | `Twist` | Nav2 / UI | bridge_node |
-| `/goal_pose` | `PoseStamped` | UI | Nav2 |
-| `/amcl_pose` | `PoseWithCovarianceStamped` | AMCL | UI |
-| `/walter/face` | `String` | any node | face.html |
+| Topic | Type | Published by | Consumed by | QoS |
+|---|---|---|---|---|
+| `/scan` | `LaserScan` | sllidar_node | lidar_filter | BEST_EFFORT |
+| `/scan_filtered` | `LaserScan` | lidar_filter | SLAM / Nav2 / UI | BEST_EFFORT |
+| `/odom` | `Odometry` | bridge_node | SLAM / AMCL / UI | RELIABLE |
+| `/imu/data_raw` | `Imu` | bridge_node | UI / drift tests | RELIABLE |
+| `/map` | `OccupancyGrid` | SLAM (mapping) / map_server (navigate) | Nav2 / UI | **TRANSIENT_LOCAL + RELIABLE** — subscribers must match or they get nothing |
+| `/cmd_vel` | `Twist` | Nav2 / UI / teleop | bridge_node | RELIABLE |
+| `/goal_pose` | `PoseStamped` | UI | Nav2 | RELIABLE |
+| `/amcl_pose` | `PoseWithCovarianceStamped` | AMCL (navigate only) | UI | RELIABLE |
+| `/tf`, `/tf_static` | `TFMessage` | bridge_node + RSP | everything | mixed |
+| `/robot_description` | `String` | robot_state_publisher | Foxglove | TRANSIENT_LOCAL |
+| `/walter/face` | `String` | any node | face.html | RELIABLE |
 
 ---
 
@@ -222,29 +116,84 @@ docker exec -it walter_dev bash -c "
 | Component | Interface | Address / Port |
 |---|---|---|
 | RPLidar A1M8 | UART | `/dev/ttyAMA0` @ 115200 |
-| Motor controller | I2C | `0x55` |
-| LSM6DS IMU | I2C | `0x6A` |
-| LiDAR power | GPIO | Pin 17 |
+| ESP32 motor controller | I²C | `0x55` |
+| LSM6DS IMU (mounted vertically — see `forward_return.py`) | I²C | `0x6A` |
+| **BQ25820 battery charger / monitor** | I²C | `0x6B` |
+| LiDAR power switch | GPIO | Pin 17 (`pinctrl set 17 op dh`) |
 | Load cell ADC | SPI | CE0 (`/dev/spidev0.0`) — manual CS on GPIO 8 |
+| Battery | 8 S Li-ion | 24 V (empty) → 32 V (full) |
 
 ---
 
-## Key Design Decisions
+## File Overview
 
-**Separate mapping and navigate modes** — SLAM Toolbox and Nav2 never run simultaneously. SLAM is heavy; it only runs during the one-time mapping phase. Production uses the lightweight AMCL + map_server combo. This halved peak RAM usage on the Pi.
+### Core runtime
 
-**`run_walter.sh` auto-detects mode** — if `maps/room_map.yaml` exists, navigate mode starts automatically. No manual flags needed in daily use.
+| File | Runs on | Purpose |
+|---|---|---|
+| `run_walter.sh` | Pi host | One-command boot: GPIO power → web server → Docker |
+| `start_brain.sh` | Docker | Staged ROS 2 startup; picks mapping vs navigate mode |
+| `bridge_node.py` | Docker | Motor control + IMU + wheel odometry at 50 Hz |
+| `lidar_filter.py` | Docker | Masks mount-obstruction blind spots, optional forward-arc gate |
+| `web_server.py` | Pi host | Flask REST API + serves static UI on :5000 + BQ25820 polling |
+| `save_map.sh` | Docker | Calls SLAM Toolbox's save service, writes `.pgm` + `.yaml` |
+| `slam_params.yaml` | Docker | SLAM Toolbox config (Pi-tuned: reduced search space, halved stack) |
+| `config/nav2_params.yaml` | Docker | Full Nav2 stack config |
 
-**`web_server.py` auto-started by `run_walter.sh`** — no separate terminal needed. Flask runs on the Pi host (outside Docker) so it can access GPIO/SPI/I2C and proxy `docker exec` commands.
+### Diagnostic / utility scripts
 
-**`/map` published in both modes** — SLAM Toolbox publishes `/map` during mapping; `map_server` republishes the saved `.pgm` during navigation. `editor.html` subscribes to `/map` and works in both modes without any SLAM dependency.
+| File | Purpose |
+|---|---|
+| `diagnose_map.sh` | Walks the `/scan → filter → /scan_filtered → SLAM → /map` chain with PASS/FAIL output |
+| `drift_test.py` | Automated 1 m → 180° → 1 m drift test with IMU calibration and CSV output |
+| `forward_return.py` | Interactive: drive forward, press ENTER to return; reports position drift |
+| `ibat_logger.py` | Logs battery current from BQ25820 to CSV at 1 Hz |
+| `lidar_diag.py` | Standalone LiDAR diagnostics |
+| `roomba_mapper.py` | Autonomous random-walk mapping helper |
+| `load_cell_test.py` | SPI ADC test + calibration wizard for tray load cells |
+| `power_consumption_cli.py` | Live power-draw monitor |
+| `qr_test.py` | QR code readability tester for table stickers |
 
-**UART not USB** — The RPLidar A1M8 connects to `/dev/ttyAMA0`. Requires disabling the serial login shell in `raspi-config` while keeping the hardware UART enabled.
+### UI
 
-**`use_sim_time: False` everywhere** — the most common Nav2 failure on real hardware. All nodes must set this or they silently wait for `/clock` forever.
+| File | Browser path | Use when |
+|---|---|---|
+| `static/index.html` | `/` | Launcher with battery widget — start here |
+| `static/map.html` | `/static/map.html` | **Mapping** — watch the map build live, drive manually |
+| `static/editor.html` | `/static/editor.html` | Either mode — place tables / zones / origin |
+| `static/delivery.html` | `/static/delivery.html` | **Navigate** — send Walter to a table |
+| `static/drive.html` | `/static/drive.html` | Either mode — keyboard / d-pad teleop |
+| `static/face.html` | `/static/face.html` | Robot's attached screen (animated eyes) |
+| `static/logs.html` | `/static/logs.html` | Live LiDAR / odom / IMU / battery gauges |
 
-**No reverse in Nav2** — `min_vel_x: 0.0` in the DWB planner. Walter rotates in place instead of reversing.
+---
 
-**SLAM params tuned for Pi** — reduced `loop_search_space_dimension` (2.5 m), halved `stack_size_to_use`, disabled `enable_interactive_mode`, increased `map_update_interval` to 8 s to reduce CPU spikes.
+## Key design decisions
 
-**Pointer events on d-pad** — `pointerdown`/`pointerup` instead of `touchstart`/`mousedown` for cross-device compatibility (touch screens, mouse, stylus).
+**Mapping and navigate modes are separate processes.** SLAM is heavy; it runs only during the one-time mapping phase. Production uses the lightweight AMCL + map_server combo. This decision roughly halved peak RAM usage on the Pi 4.
+
+**`run_walter.sh` auto-detects the mode.** If `maps/room_map.yaml` exists → navigate. Otherwise → mapping. No flags needed in daily use.
+
+**Web server runs on the Pi host, not in Docker.** Because it needs direct access to GPIO, SPI and I²C (for the battery monitor at 0x6B). It proxies `docker exec` calls when it needs to talk to ROS-side scripts (like `save_map.sh`).
+
+**Two bridges, two audiences.** rosbridge stays open for the web UI; foxglove_bridge is whitelisted to keep the Foxglove panel list focused on the 4 things you actually want to look at.
+
+**LiDAR filter sits in the middle, not at the edge.** `/scan` is what the raw driver publishes; `/scan_filtered` is what SLAM and Nav2 consume. This separation means the unfiltered scan is still available to the UI for visualisation, while the algorithm-facing topic has the robot's own body / mounts masked out.
+
+**`use_sim_time: False` everywhere.** The single most common Nav2 failure on real hardware. If even one node has `use_sim_time: True`, it silently waits for `/clock` forever and nothing publishes.
+
+**No reverse in Nav2.** `min_vel_x: 0.0` in the DWB planner. Walter rotates in place instead of backing up — safer in tight spaces.
+
+**SLAM params tuned for Pi 4.** Reduced `loop_search_space_dimension` to 2.5 m, halved `stack_size_to_use`, disabled `enable_interactive_mode`, raised `map_update_interval` to 8 s to flatten the CPU spike.
+
+**Map QoS is TRANSIENT_LOCAL + RELIABLE.** SLAM Toolbox and map_server both publish `/map` this way. Any subscriber that uses VOLATILE (the rosbridge JS default) silently gets nothing. The web UI's `map.html` opens the subscription manually with the correct QoS via raw WebSocket; Foxglove negotiates it automatically.
+
+**IMU is mounted vertically.** Raw odom yaw reads at 2× actual physical rotation. `forward_return.py` documents and compensates for this with a `YAW_SCALE = 2.0` constant.
+
+**No reliance on USB.** Lidar is UART (`/dev/ttyAMA0`), so the Pi's USB ports stay free for the keyboard / debug console.
+
+---
+
+## Next steps
+
+For everything operational — building a map, running deliveries, calibrating sensors, viewing in Foxglove — go to **[SETUP.md](SETUP.md)**.
