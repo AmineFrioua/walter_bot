@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
 """
-forward_return.py — Drive forward.  Press ENTER → robot turns 180° and
-                     comes back the SAME distance.  Print drift report.
+forward_return.py — Drive forward.  Robot turns 180° and comes back the
+                     SAME distance.  Prints drift report.
 
 Run inside Docker:
   docker exec -it walter_dev bash -c "
     source /opt/ros/humble/setup.bash &&
     cd /ros2_ws &&
-    python3 forward_return.py l"        # l / m / h
+    python3 forward_return.py l"           # manual — press ENTER to stop
+
+  python3 forward_return.py l 0.5         # auto-stop at 0.5 m
+  python3 forward_return.py m 1.0         # auto-stop at 1.0 m
+  python3 forward_return.py h 0.2         # auto-stop at 0.2 m
 
 Speed levels:
    l :  0.02 m/s linear  /  0.01 rad/s angular
    m :  0.04 m/s linear  /  0.03 rad/s angular
    h :  0.06 m/s linear  /  0.06 rad/s angular
+
+Optional distance argument (metres):
+   If provided the robot stops automatically when odom reaches that distance.
+   If omitted  the robot drives until you press ENTER / SPACE.
+   Any positive float is accepted (e.g. 0.1  0.2  0.5  1.0  2.0).
 
 This is intentionally as simple as possible — odom for distance, odom yaw
 for the 180° turn, with one hardware compensation: the IMU is mounted
@@ -73,11 +82,12 @@ class ForwardReturn(Node):
     # Phase enum
     FORWARD, PAUSE_BEFORE_TURN, TURNING, PAUSE_BEFORE_RETURN, RETURNING, DONE = range(6)
 
-    def __init__(self, level):
+    def __init__(self, level, target_dist=None):
         super().__init__('forward_return')
 
-        self._lin = LIN_SPEEDS[level]
-        self._ang = ANG_SPEEDS[level]
+        self._lin         = LIN_SPEEDS[level]
+        self._ang         = ANG_SPEEDS[level]
+        self._target_dist = target_dist   # metres to auto-stop, or None → manual
 
         self._pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.create_subscription(Odometry, '/odom', self._odom_cb, 10)
@@ -119,7 +129,12 @@ class ForwardReturn(Node):
         print(f"\n  Walter forward-return  —  level {level.upper()}")
         print(f"  Linear  {self._lin} m/s    Angular  {self._ang} rad/s")
         print(f"  (180° physical turn ≈ {eta:.0f} s)")
-        print(f"\n  Driving forward …  press ENTER to turn back and return\n")
+        if self._target_dist is not None:
+            print(f"\n  Target distance : {self._target_dist:.3f} m  "
+                  f"(auto-stop when odom reaches this)")
+        else:
+            print(f"\n  Driving forward …  press ENTER / SPACE to turn back and return")
+        print()
 
     # ── Callbacks ─────────────────────────────────────────────────────────
 
@@ -178,17 +193,30 @@ class ForwardReturn(Node):
             direction = ("straight" if abs(drift_physical_deg) < 0.5
                          else ("left" if drift_physical_deg > 0 else "right"))
 
-            print(f"  → {d:.3f} m   heading: {drift_physical_deg:+.1f}°"
-                  f" ({direction})   (press ENTER)        ",
-                  end='\r', flush=True)
+            if self._target_dist is not None:
+                remaining = self._target_dist - d
+                print(f"  → {d:.3f} / {self._target_dist:.3f} m   "
+                      f"heading: {drift_physical_deg:+.1f}° ({direction})"
+                      f"   remain: {max(remaining, 0):.3f} m        ",
+                      end='\r', flush=True)
+            else:
+                print(f"  → {d:.3f} m   heading: {drift_physical_deg:+.1f}°"
+                      f" ({direction})   (press ENTER)        ",
+                      end='\r', flush=True)
 
-            if self._read_enter():
-                self._dist_out     = d
-                self._fwd_drift_at_stop = drift_physical_deg   # snapshot
+            # Stop condition: auto (distance reached) or manual (ENTER key)
+            stop = (self._target_dist is not None and d >= self._target_dist) \
+                   or self._read_enter()
+
+            if stop:
+                self._dist_out          = d
+                self._fwd_drift_at_stop = drift_physical_deg
                 self._cmd(0.0, 0.0)
                 self._pause_t0 = time.monotonic()
                 self._state    = self.PAUSE_BEFORE_TURN
-                print(f"\n  [ENTER]  outbound = {d:.3f} m  "
+                trigger = (f"auto-stop at {self._target_dist:.3f} m target"
+                           if self._target_dist is not None else "ENTER")
+                print(f"\n  [{trigger}]  outbound = {d:.3f} m  "
                       f"heading drift = {drift_physical_deg:+.1f}°  "
                       f"—  stopping before turn")
             else:
@@ -298,23 +326,55 @@ class ForwardReturn(Node):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-def _pick_level():
-    """Return l/m/h either from argv[1] or by interactive prompt."""
+def _pick_args():
+    """Parse (level, target_dist) from argv or interactive prompts.
+
+    Returns:
+        level       – 'l', 'm', or 'h'
+        target_dist – float in metres, or None (manual ENTER mode)
+    """
+    # ── Speed level ──────────────────────────────────────────────────────
     if len(sys.argv) > 1 and sys.argv[1].lower() in LIN_SPEEDS:
-        return sys.argv[1].lower()
-    print("Speed levels:")
-    for k in LIN_SPEEDS:
-        print(f"  {k}  :  linear {LIN_SPEEDS[k]} m/s   angular {ANG_SPEEDS[k]} rad/s")
-    while True:
-        c = input("Pick level [l/m/h]: ").strip().lower()
-        if c in LIN_SPEEDS:
-            return c
+        level = sys.argv[1].lower()
+    else:
+        print("Speed levels:")
+        for k in LIN_SPEEDS:
+            print(f"  {k}  :  linear {LIN_SPEEDS[k]} m/s   angular {ANG_SPEEDS[k]} rad/s")
+        while True:
+            c = input("Pick level [l/m/h]: ").strip().lower()
+            if c in LIN_SPEEDS:
+                level = c
+                break
+
+    # ── Target distance (optional) ───────────────────────────────────────
+    target_dist = None
+    if len(sys.argv) > 2:
+        try:
+            v = float(sys.argv[2])
+            if v <= 0:
+                raise ValueError("distance must be > 0")
+            target_dist = v
+        except ValueError as e:
+            print(f"  [!] Bad distance argument '{sys.argv[2]}': {e}")
+            print("      Falling back to manual ENTER mode.")
+    else:
+        ans = input("Target distance in metres (leave blank to use ENTER manually): ").strip()
+        if ans:
+            try:
+                v = float(ans)
+                if v <= 0:
+                    raise ValueError("distance must be > 0")
+                target_dist = v
+            except ValueError as e:
+                print(f"  [!] {e}  —  using manual ENTER mode.")
+
+    return level, target_dist
 
 
 def main():
-    level = _pick_level()
+    level, target_dist = _pick_args()
     rclpy.init()
-    node = ForwardReturn(level)
+    node = ForwardReturn(level, target_dist)
 
     def _sigint(sig, frame):
         print("\n  Ctrl+C — stopping robot")
