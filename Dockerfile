@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y \
     ros-humble-robot-state-publisher \
     ros-humble-joint-state-publisher \
     ros-humble-rosbridge-suite \
+    ros-humble-foxglove-bridge \
     ros-humble-teleop-twist-keyboard \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*

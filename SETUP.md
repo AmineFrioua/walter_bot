@@ -1,122 +1,282 @@
-# Walter — Setup Guide
+# Walter — Setup & Operations Guide
 
-Covers everything from first boot to a working delivery system.
+Step-by-step procedures for every task. Each section is self-contained; you don't need to read them in order.
+
+> For an overview of what Walter is and how it's architected, see **[README.md](README.md)**.
 
 ---
 
-## Prerequisites
+## Table of contents
 
-### Docker image
+1. [Prerequisites — first-time install](#1--prerequisites--first-time-install)
+2. [Booting Walter](#2--booting-walter)
+3. [Building a map (mapping mode)](#3--building-a-map-mapping-mode)
+4. [Running deliveries (navigate mode)](#4--running-deliveries-navigate-mode)
+5. [Placing tables and zones (editor)](#5--placing-tables-and-zones-editor)
+6. [Manual driving](#6--manual-driving)
+7. [Foxglove Studio](#7--foxglove-studio)
+8. [Web UI tour](#8--web-ui-tour)
+9. [Diagnostics — when something is broken](#9--diagnostics--when-something-is-broken)
+10. [Drift testing](#10--drift-testing)
+11. [Battery monitoring & IBAT logger](#11--battery-monitoring--ibat-logger)
+12. [Load cell calibration](#12--load-cell-calibration)
+13. [QR code readability test](#13--qr-code-readability-test)
+14. [Auto-start on boot](#14--auto-start-on-boot)
+15. [Map management](#15--map-management)
+16. [Flask API reference](#16--flask-api-reference)
+17. [Troubleshooting](#17--troubleshooting)
+18. [Hardware wiring](#18--hardware-wiring)
 
-Everything ROS-related runs in Docker. Build the image once:
+---
+
+## 1 — Prerequisites — first-time install
+
+### 1.1 Raspberry Pi configuration
+
+```bash
+sudo raspi-config
+```
+
+Enable:
+- **Interface Options → SPI** (for load cells)
+- **Interface Options → I²C** (motors, IMU, battery)
+- **Interface Options → Serial Port** — disable the **serial login shell**, **enable** the serial port hardware
+
+After saving, reboot.
+
+### 1.2 Docker
+
+The whole ROS stack runs in one container. Build it once:
 
 ```bash
 docker build -t walter_dev .
 ```
 
-This installs ROS 2 Humble, Nav2, SLAM Toolbox, rosbridge, and all Python dependencies.
+This installs ROS 2 Humble, Nav2, SLAM Toolbox, rosbridge, **foxglove_bridge**, the sllidar driver, and all Python deps. The build takes ~30 min on a Pi 4.
 
-### Pi host dependencies
-
-`web_server.py` runs outside Docker (so it can access GPIO/SPI/I2C). Install Flask on the Pi host:
+If you've already built the image but want to pick up the new `foxglove_bridge` package without a full rebuild:
 
 ```bash
-pip3 install flask
+docker exec walter_dev apt-get update
+docker exec walter_dev apt-get install -y ros-humble-foxglove-bridge
 ```
+
+### 1.3 Pi host dependencies
+
+`web_server.py`, `ibat_logger.py`, `load_cell_test.py` etc. run **outside** Docker so they can hit GPIO / SPI / I²C directly. Install on the Pi host:
+
+```bash
+pip3 install flask smbus2 spidev RPi.GPIO
+```
+
+### 1.4 Verify hardware addresses
+
+```bash
+sudo i2cdetect -y 1
+```
+
+You should see:
+- `0x55` — motor controller (ESP32)
+- `0x6A` — LSM6DS IMU
+- `0x6B` — BQ25820 battery monitor
+
+If anything is missing, check wiring before continuing.
 
 ---
 
-## Step 1 — Boot Walter
+## 2 — Booting Walter
+
+The one-command boot:
 
 ```bash
 ./run_walter.sh
 ```
 
-What this does, in order:
-1. Powers the LiDAR via GPIO 17 (`sudo pinctrl set 17 op dh`)
-2. Starts `web_server.py` on port 5000 in the background
-3. Waits 3 seconds for the LiDAR to spin up
-4. Removes any stale Docker container named `walter_dev`
-5. Starts Docker with the ROS 2 stack in the detected mode
+What happens in order:
 
-**Mode auto-detection:**
+1. **GPIO power-up** — `sudo pinctrl set 17 op dh` enables the LiDAR power rail.
+2. **Web server** — `web_server.py` is started on port 5000 in the background.
+3. **3 s wait** — for the LiDAR to spin up and stabilise.
+4. **Stale-container cleanup** — `docker rm -f walter_dev` removes any leftover container from a previous crash.
+5. **Docker start** — launches `walter_dev` with `--network host`, mounts the repo at `/ros2_ws`, runs `start_brain.sh`.
 
-| Condition | Mode started |
+### Mode auto-detection
+
+| Condition | Mode launched |
 |---|---|
-| `maps/room_map.yaml` exists | Navigate (AMCL + Nav2) |
-| No map file found | Mapping (SLAM only) |
+| `maps/room_map.yaml` exists | **Navigate** (AMCL + Nav2) |
+| Map file missing | **Mapping** (SLAM Toolbox only) |
 
-Override explicitly:
+### Override the mode
 
 ```bash
-./run_walter.sh mapping             # force map-building mode
-./run_walter.sh navigate            # force production mode
-./run_walter.sh navigate my_map     # navigate with maps/my_map.yaml
+./run_walter.sh mapping              # force mapping (build a new map)
+./run_walter.sh navigate             # force navigate with maps/room_map
+./run_walter.sh navigate my_custom   # navigate with maps/my_custom.yaml
 ```
+
+### Stopping cleanly
+
+`Ctrl+C` in the launching terminal triggers `start_brain.sh`'s cleanup handler. In mapping mode it **saves the map before exit**.
 
 ---
 
-## Step 2 — Open the UI
+## 3 — Building a map (mapping mode)
 
-From a browser on the same network:
+First-time setup — no saved map exists yet, so `./run_walter.sh` starts in mapping mode automatically.
 
-```
-http://<pi-ip>:5000/
-```
+### 3.1 Start mapping
 
-The launcher page has cards for all tools. All pages are mobile-friendly — use a phone or tablet if needed.
-
----
-
-## Step 3 — Build a map (first time only)
-
-On first boot there is no map, so Walter starts in **mapping mode** (SLAM Toolbox, no Nav2).
-
-1. Open `http://<pi-ip>:5000/static/map.html`
-2. The map canvas starts blank; the LiDAR is already scanning
-3. Open **Drive** tab (or `http://<pi-ip>:5000/static/drive.html` on another tab) and drive Walter around the room
-4. Watch the map build live:
-   - Blue edges = detected obstacle boundaries
-   - Coloured dots = current LiDAR scan
-   - Orange dot = closest point in the forward ±15° arc
-5. Cover all walls and obstacle perimeters
-6. Click **Save Map** in the Drive tab when done
-
-The map is also **auto-saved every 2 minutes** and on Ctrl+C.
-
-Saved files:
-```
-maps/room_map.pgm    ← bitmap
-maps/room_map.yaml   ← metadata (resolution, origin)
+```bash
+./run_walter.sh
+# (or  ./run_walter.sh mapping  to force it)
 ```
 
-7. Stop Walter (`Ctrl+C` in the terminal) and restart:
+Wait until the terminal prints:
+
+```
+✅ Mapping. Drive around, then Save Map in the UI (or Ctrl+C).
+```
+
+### 3.2 Open the map UI
+
+In a browser on the same network:
+
+```
+http://<pi-ip>:5000/static/map.html
+```
+
+The canvas starts blank — the LiDAR is already scanning but SLAM Toolbox hasn't accumulated enough scans yet.
+
+### 3.3 Drive the robot
+
+Either:
+- Use the **Drive tab** inside `map.html` (d-pad + speed slider), or
+- Open a separate `http://<pi-ip>:5000/static/drive.html` tab and use the keyboard.
+
+Drive **slowly** (0.05–0.10 m/s). SLAM Toolbox adds a scan to the graph only when the robot moves at least `minimum_travel_distance = 0.3 m` OR rotates `minimum_travel_heading = 0.3 rad`. Nudging back and forth produces no map growth.
+
+### 3.4 Watch the map build
+
+What you should see in `map.html`:
+- **Grey** — unknown / unobserved cells
+- **White** — free space (LiDAR ray passed through)
+- **Black** — occupied (LiDAR ray hit a wall)
+- **Coloured dots** — current `/scan_filtered` points
+- **Orange dot** — closest point in the forward ±15° arc
+
+The `/map` topic publishes only every **`map_update_interval = 8 s`** (from `slam_params.yaml`). Don't be alarmed if the map doesn't grow every second.
+
+### 3.5 Cover the whole room
+
+Drive close to every wall and around obstacles. SLAM's loop-closure runs when you revisit an area — try to make at least one closed loop around the room before finishing.
+
+### 3.6 Save the map
+
+| Method | How |
+|---|---|
+| **In the UI** | Click **Save Map** in the Drive tab of `map.html` |
+| **Auto-save** | Every 2 minutes — see `start_brain.sh` |
+| **On Ctrl+C** | Saved automatically before SLAM shuts down |
+| **From a shell** | `docker exec -it walter_dev bash /ros2_ws/save_map.sh` |
+
+Saved files land in:
+
+```
+maps/room_map.pgm    ← bitmap (white=free, black=occupied, grey=unknown)
+maps/room_map.yaml   ← metadata (resolution, origin, thresholds)
+```
+
+### 3.7 Switch to navigate
+
+Stop Walter (`Ctrl+C`), then:
 
 ```bash
 ./run_walter.sh
 ```
 
-This time `maps/room_map.yaml` exists → Walter auto-starts in **navigate mode**.
+`maps/room_map.yaml` exists now → auto-detect picks navigate mode.
+
+### 3.8 If the map isn't accumulating
+
+See [§9 — Diagnostics](#9--diagnostics--when-something-is-broken). Run:
+
+```bash
+docker exec -it walter_dev bash /ros2_ws/diagnose_map.sh
+```
+
+The script walks the entire pipeline (`/scan → lidar_filter → /scan_filtered → SLAM → /map`) with PASS / FAIL output.
 
 ---
 
-## Step 4 — Place tables and zones
+## 4 — Running deliveries (navigate mode)
 
-With Walter running in navigate mode:
+### 4.1 Start in navigate mode
 
-1. Open `http://<pi-ip>:5000/static/editor.html`
-2. The saved map loads from the `/map` topic (published by `map_server`)
-3. **Place a waypoint:**
-   - Select type from the toolbar: **Table**, **Zone**, or **Origin**
-   - Click anywhere on the map to place it
-   - Fill in the label and (for tables) width × depth
-   - Click **Save**
-4. **Move a waypoint:** drag the marker to a new position
-5. **Edit / delete:** click the marker to open the inline form
+A saved map must exist (see §3). Then:
 
-Waypoints are stored in `waypoints.json` in the repo root and persist across reboots.
+```bash
+./run_walter.sh
+# (auto-detects navigate mode, or force with  ./run_walter.sh navigate)
+```
 
-**Waypoint schema:**
+Wait until the terminal prints:
+
+```
+✅ Walter is live. AMCL localising on saved map.
+```
+
+### 4.2 Verify AMCL has converged
+
+Open `http://<pi-ip>:5000/static/editor.html`. The map should appear. AMCL needs ~5 s and a small motion to converge — if Walter's marker doesn't appear, drive it 30 cm forward and back.
+
+### 4.3 Send a delivery
+
+```
+http://<pi-ip>:5000/static/delivery.html
+```
+
+1. Tap a table from the list (populated from `waypoints.json`).
+2. Tap **Send Walter**. The UI publishes a `PoseStamped` to `/goal_pose`.
+3. Walter plans, drives, waits `DELIVERY_WAIT_S` seconds (10 by default — set in `web_server.py`), then returns to the **origin** waypoint.
+4. **Cancel** stops the navigation goal at any time.
+
+### 4.4 Live position
+
+`/amcl_pose` is shown on the map. If it jumps around, AMCL isn't well-localised — either widen the initial particle cloud or drive the robot to a known landmark.
+
+---
+
+## 5 — Placing tables and zones (editor)
+
+Works in **both** mapping and navigate modes — `editor.html` subscribes to `/map` (published by SLAM or `map_server` depending on mode).
+
+### 5.1 Open the editor
+
+```
+http://<pi-ip>:5000/static/editor.html
+```
+
+### 5.2 Place a waypoint
+
+1. Pick a type from the toolbar:
+   - **Table** — numbered, with width × depth
+   - **Zone** — named area (kitchen, bar, dance floor)
+   - **Origin** — robot home / return point (only one allowed)
+2. Click on the map at the location.
+3. Fill in the form that appears (label, dimensions if a table).
+4. Hit **Save**.
+
+### 5.3 Edit / move / delete
+
+- **Drag** a marker to reposition.
+- **Click** a marker to open its inline edit form.
+- The form has a **Delete** button.
+
+All changes write to `waypoints.json` at the repo root.
+
+### 5.4 Schema (`waypoints.json`)
+
 ```json
 {
   "Table 1": {
@@ -126,62 +286,98 @@ Waypoints are stored in `waypoints.json` in the repo root and persist across reb
     "number": 1,
     "width": 0.8,
     "depth": 0.6
+  },
+  "Origin": {
+    "x": 0.0, "y": 0.0, "theta": 0.0,
+    "label": "Origin",
+    "type": "origin"
   }
 }
 ```
 
 ---
 
-## Step 5 — Delivery
-
-1. Open `http://<pi-ip>:5000/static/delivery.html`
-2. Tap a table name in the list
-3. Tap **Send Walter** — a Nav2 goal is published to `/goal_pose`
-4. Walter navigates autonomously to the table and waits (10 s by default), then returns to origin
-5. Tap **Cancel** at any time to abort
-
-Walter's live position is shown on the map using `/amcl_pose`.
-
----
-
-## Step 6 — Manual drive
+## 6 — Manual driving
 
 Open `http://<pi-ip>:5000/static/drive.html`
 
-**Keyboard bindings:**
+### 6.1 Keyboard
 
 | Key | Action |
 |---|---|
-| W / ↑ | Forward |
-| S / ↓ | Backward |
-| A / ← | Turn left |
-| D / → | Turn right |
-| Q / Z | Both speeds ×1.1 / ×0.9 |
-| = / - | Linear speed up / down |
-| E / C | Angular speed up / down |
-| Space / K | Emergency stop |
+| `W` / `↑` | Forward |
+| `S` / `↓` | Backward |
+| `A` / `←` | Turn left |
+| `D` / `→` | Turn right |
+| `Q` / `Z` | Both speeds ×1.1 / ×0.9 |
+| `=` / `-` | Linear speed up / down |
+| `E` / `C` | Angular speed up / down |
+| `Space` / `K` | Emergency stop |
 
-Speed starts at 0.05 m/s linear, 0.50 rad/s angular. Values are shown live and persist between key presses. A stop command is sent automatically when the window loses focus.
+Starts at 0.05 m/s linear, 0.50 rad/s angular. A stop command is sent automatically if the window loses focus.
 
-The page also has an on-screen **d-pad** for touchscreen / mobile use.
+### 6.2 D-pad (touch / mouse)
+
+Identical actions to the keyboard. Uses `pointerdown`/`pointerup` events so it works on touch screens, mouse and stylus.
+
+### 6.3 Without the UI — pure CLI
+
+Inside the Docker container:
+
+```bash
+docker exec -it walter_dev bash -c "
+  source /opt/ros/humble/setup.bash &&
+  ros2 run teleop_twist_keyboard teleop_twist_keyboard
+"
+```
 
 ---
 
-## Step 7 — Sensor logs
+## 7 — Foxglove Studio
 
-Open `http://<pi-ip>:5000/static/logs.html`
+`foxglove_bridge` is on port `:8765` with a topic whitelist of **only** `/scan`, `/scan_filtered`, `/map`, `/tf`, `/tf_static`, `/robot_description`.
 
-Live gauges show:
-- `/scan` — point count, min / max / mean range
-- `/odom` — linear and angular velocity
-- `/imu/data_raw` — acceleration X / Y / Z
-- `/cmd_vel` — commanded velocity
+### 7.1 Connect
 
-Useful for verifying hardware is publishing correctly before a delivery run.
+1. Install Foxglove Studio (https://foxglove.dev/download).
+2. **Open connection** → **Foxglove WebSocket** → `ws://<pi-ip>:8765`.
+3. You should see exactly the 6 topics above in the data source panel.
+
+### 7.2 Build a useful layout
+
+| Panel | Topic | Purpose |
+|---|---|---|
+| **3D** | `/tf`, `/tf_static`, `/robot_description` | Shows the robot model with the LiDAR frame |
+| **Map** | `/map` | Live occupancy grid (in mapping) or saved map (in navigate) |
+| **Plot — LaserScan range** | `/scan` | Raw distances per beam |
+| **Plot — LaserScan range** | `/scan_filtered` | After lidar_filter — see the blind-spot masking work |
+
+For the 3D panel, after adding it: **+ → Topic → /robot_description** (URDF) and add `/tf` so the model follows the robot's pose.
+
+### 7.3 If a topic isn't appearing
+
+The whitelist is configured in `start_brain.sh`. To temporarily expose more topics:
+
+```bash
+docker exec walter_dev ros2 param set /foxglove_bridge topic_whitelist \
+  '["/scan","/scan_filtered","/map","/tf","/tf_static","/robot_description","/odom","/imu/data_raw"]'
+```
 
 ---
 
-## Step 8 — Robot face screen
+## 8 — Web UI tour
+
+| Page | URL | When to use |
+|---|---|---|
+| Launcher | `/` | Start here — also has the battery widget |
+| Map | `/static/map.html` | Mapping mode — drive + watch the map build |
+| Editor | `/static/editor.html` | Either mode — place tables / zones / origin |
+| Delivery | `/static/delivery.html` | Navigate mode — send Walter to a table |
+| Drive | `/static/drive.html` | Either mode — keyboard / d-pad teleop |
+| Face | `/static/face.html` | The robot's screen — open fullscreen on the on-robot display |
+| Logs | `/static/logs.html` | Live LiDAR / odom / IMU / battery gauges |
+
+### 8.1 Face screen
 
 Open fullscreen on the robot's attached screen:
 
@@ -189,7 +385,7 @@ Open fullscreen on the robot's attached screen:
 http://localhost:5000/static/face.html
 ```
 
-The eyes react automatically to `/cmd_vel`. Trigger named states from any node or shell:
+Eyes react automatically to `/cmd_vel`. Trigger named states from any node:
 
 ```bash
 docker exec -it walter_dev bash -c "
@@ -198,15 +394,213 @@ docker exec -it walter_dev bash -c "
 "
 ```
 
-Valid states: `idle`, `moving`, `turning`, `arrived`, `waiting`, `returning`, `error`
+Valid states: `idle`, `moving`, `turning`, `arrived`, `waiting`, `returning`, `error`.
+
+### 8.2 Logs page
+
+Real-time sensor gauges fed from rosbridge:
+
+- `/scan` — point count, min / max / mean range
+- `/odom` — linear and angular velocity
+- `/imu/data_raw` — acceleration X / Y / Z
+- `/cmd_vel` — commanded velocity
+- **BQ25820 battery** — voltage, current, charge state (polled via Flask `/api/battery`)
+
+Use this before a delivery to confirm everything is publishing.
 
 ---
 
-## Step 9 — Load cell calibration
+## 9 — Diagnostics — when something is broken
 
-Walter's motherboard routes load cell signals through a 24-bit SPI ADC before reaching the Pi. Use `load_cell_test.py` to verify the connection and calibrate.
+### 9.1 The map pipeline diagnostic
 
-### Wiring (BCM pins)
+Run inside Docker:
+
+```bash
+docker exec -it walter_dev bash /ros2_ws/diagnose_map.sh
+```
+
+It walks the chain step-by-step:
+
+```
+── 1. ROS nodes running ──────────────
+   ✅ /sllidar_node is running
+   ✅ /lidar_filter is running
+   ✅ /walter_hardware_bridge is running
+   ✅ /slam_toolbox is running
+
+── 2. /scan ──────────────────────────
+   ✅ /scan publishing at 25.4 Hz
+
+── 3. /scan_filtered ────────────────
+   ✅ /scan_filtered publishing at 25.4 Hz
+
+── 4. TF tree ────────────────────────
+   ✅ map → base_link  available
+   ✅ map → laser_frame  available
+
+── 5. /map topic ─────────────────────
+   ✅ /map topic exists
+   ✅ Latest /map :  width: 481  height: 392  resolution: 0.05
+
+── 6. Bridges ────────────────────────
+   ✅ rosbridge_websocket alive on :9090
+   ✅ foxglove_bridge alive on :8765
+```
+
+If anything is ❌, the script tells you what's broken AND prints the last 6 lines of SLAM's log.
+
+### 9.2 Tail the live logs
+
+All bridges and SLAM/Nav2 now log to `/tmp/*.log` (instead of `/dev/null`):
+
+```bash
+docker exec -it walter_dev tail -f /tmp/slam.log
+docker exec -it walter_dev tail -f /tmp/nav2.log
+docker exec -it walter_dev tail -f /tmp/rosbridge.log
+docker exec -it walter_dev tail -f /tmp/foxglove_bridge.log
+```
+
+Common SLAM warnings and what they mean:
+
+| Log line | Meaning |
+|---|---|
+| `[WARN] No transform from [base_link] to [map]` | TF tree broken — `bridge_node.py` probably crashed |
+| `[WARN] Failed to compute odom pose` | `/odom` isn't publishing — ESP32 not responding on I²C 0x55 |
+| Repeated `Got scan` with no `Adding scan to graph` | Robot moved less than 0.3 m between scans — drive further |
+
+### 9.3 Inspect individual topics
+
+```bash
+docker exec -it walter_dev bash -c "
+  source /opt/ros/humble/setup.bash &&
+  ros2 topic list                         # all topics
+  ros2 topic hz /scan_filtered            # publish rate
+  ros2 topic echo /map --once \\
+    --qos-durability transient_local      # one /map message
+  ros2 run tf2_ros tf2_echo map base_link # TF map → base_link
+"
+```
+
+---
+
+## 10 — Drift testing
+
+Two tools live at the repo root. Both run inside Docker.
+
+### 10.1 `drift_test.py` — automated
+
+Drives 1 m forward, rotates 180° (IMU-integrated, bias-corrected), drives 1 m back, prints a report and a CSV.
+
+```bash
+docker exec -it walter_dev bash -c "
+  source /opt/ros/humble/setup.bash &&
+  cd /ros2_ws &&
+  python3 drift_test.py
+"
+```
+
+What it produces:
+
+```
+══════════════════════════════════════════
+  DRIFT TEST REPORT
+══════════════════════════════════════════
+
+  IMU CALIBRATION
+    Gyro Z bias        : +0.0023 rad/s
+    Fwd accel bias     : -0.041  m/s²
+
+  PHASE 1  Forward 1.0 m
+    Commanded   : 1.000 m
+    Actual IMU  : 0.987 m
+    Actual odom : 0.992 m
+
+  PHASE 2  Rotate 180°
+    Commanded  : 180.00°
+    Actual IMU : 179.43°
+    Error      : -0.57°
+
+  FINAL POSITION (odom vs start)
+    Position drift : 0.026 m
+    Heading drift  : +1.2°
+```
+
+Plus a CSV at `/tmp/drift_<timestamp>.csv` with per-tick state, IMU integration, commanded velocity — useful for plotting in a notebook later.
+
+**Copy the CSV to your laptop:**
+
+```bash
+scp <user>@<pi-ip>:/tmp/drift_20260523_142351.csv ~/Downloads/
+```
+
+### 10.2 `forward_return.py` — interactive
+
+Drive forward at a chosen speed, press ENTER when you want it to turn around and come back the same distance.
+
+```bash
+docker exec -it walter_dev bash -c "
+  source /opt/ros/humble/setup.bash &&
+  cd /ros2_ws &&
+  python3 forward_return.py m
+"
+```
+
+Speed levels (positional argument or interactive prompt):
+
+| Level | Linear | Angular |
+|---|---|---|
+| `l` low | 0.02 m/s | 0.01 rad/s |
+| `m` medium | 0.04 m/s | 0.03 rad/s |
+| `h` high | 0.06 m/s | 0.06 rad/s |
+
+Controls during the run:
+- **ENTER / SPACE** — trigger return (when driving forward) or stop early (during return)
+- **Ctrl+C** — emergency stop + partial report
+
+The script's docstring documents the hardware compensation constants (`YAW_SCALE = 2.0` for the vertically-mounted IMU, `DIST_SCALE = 10.0` for the wheel-encoder under-report).
+
+---
+
+## 11 — Battery monitoring & IBAT logger
+
+### 11.1 Live battery in the UI
+
+The launcher (`/`) and `logs.html` both show:
+
+- **Voltage** (VBAT) — 24 V (empty) → 32 V (full) for the 8 S Li-ion pack
+- **Current** (IBAT) — positive = charging, negative = discharging
+- **System voltage** (VSYS) — the rail powering the Pi and motors
+- **Charge state** — `not_charging` / `trickle` / `pre_charge` / `fast_charge` / `taper_charge`
+- **Power good** — ⚡ when a charger is connected
+
+Polled from `web_server.py:/api/battery` every 30 s.
+
+### 11.2 IBAT logger — long-running CSV capture
+
+`ibat_logger.py` runs on the Pi host (it reads I²C directly, no Docker needed):
+
+```bash
+python3 ibat_logger.py idle_with_lidar
+# Logs 100 points at 1 Hz, then stops. Or Ctrl+C earlier.
+# Output: idle_with_lidar.csv  (columns: t_s, ibat_ma)
+```
+
+Useful for measuring how much current the robot draws in different states (idle, mapping, navigating, with/without LiDAR powered).
+
+**Pull the CSV to your laptop:**
+
+```bash
+scp <user>@<pi-ip>:~/walter_bot/idle_with_lidar.csv ~/Downloads/
+```
+
+---
+
+## 12 — Load cell calibration
+
+The tray weight sensors connect through a 24-bit SPI ADC. `load_cell_test.py` is the test + calibration tool.
+
+### 12.1 Wiring (BCM pin numbers)
 
 | Signal | GPIO | Direction |
 |---|---|---|
@@ -215,81 +609,73 @@ Walter's motherboard routes load cell signals through a 24-bit SPI ADC before re
 | `/CS` | 8 | Output (manual) |
 | `MOSI/MISO/SCLK` | SPI0 CE0 | SPI hardware |
 
-Enable SPI on the Pi if not already done:
-```bash
-sudo raspi-config   # Interface Options → SPI → Enable
-```
-
-Install Python dependencies (Pi host):
-```bash
-pip3 install spidev RPi.GPIO
-```
-
-### Test the connection
+### 12.2 Test the connection
 
 ```bash
-# Quick sanity check — prints one decoded frame from all 6 channels after reset
 python3 load_cell_test.py --debug
 ```
 
-Expected output when wired correctly:
+Expected output:
+
 ```
   CH0:  +00012345  (  +0.0018 mV)
-  CH1:  -00003210  (  -0.0005 mV)   ← target
+  CH1:  -00003210  (  -0.0005 mV)   ← target channel
   ...
 ```
 
-If DRDY never asserts you'll see:
+If `DRDY` never asserts:
+
 ```
   ⚠  DRDY did not assert within 2 s after reset.
      Possible causes:
        - ADC not powered
        - Wrong SPI mode (try spi.mode = 0b00)
-       ...
+       - Wrong RESET polarity (active-low?)
 ```
 
-### Calibrate (tare + known weight)
+### 12.3 Calibrate (tare + known weight)
 
 ```bash
 python3 load_cell_test.py --calibrate
 ```
 
-The wizard walks through two steps:
-1. **Tare** — remove all weight, press Enter, script reads 30 samples and computes the zero offset
-2. **Scale** — place a known weight (e.g. 1 kg), enter the value, script computes the scale factor
+Two-step wizard:
+1. **Tare** — remove all weight, press Enter. 30 samples → zero offset.
+2. **Scale** — place a known weight (e.g. 1 kg), enter the value. Computes the scale factor.
 
 Output:
+
 ```
   TARE_OFFSET_CODE = -12450
   SCALE_FACTOR_KG  = 0.00000812
 ```
 
-Copy these two values into the config block at the top of `load_cell_test.py` and into the `web_server.py` weight polling thread.
+Copy both into the config block at the top of `load_cell_test.py` and into `web_server.py`'s weight polling thread.
 
-### Live monitoring
+### 12.4 Live monitoring
 
 ```bash
-python3 load_cell_test.py                 # single channel, rolling average
-python3 load_cell_test.py --channel 0     # read a different channel
-python3 load_cell_test.py --all           # show all 6 channels per line
-python3 load_cell_test.py --samples 500   # capture 500 samples then exit
+python3 load_cell_test.py                # single channel, rolling average
+python3 load_cell_test.py --channel 0    # different channel
+python3 load_cell_test.py --all          # all 6 channels
+python3 load_cell_test.py --samples 500  # capture 500 samples then exit
 ```
 
-### Integrate with web server
+### 12.5 Expose weight via the API
 
-Once calibrated, add a background polling thread to `web_server.py`:
+Add to `web_server.py`:
 
 ```python
 import threading, spidev, RPi.GPIO as GPIO
 
-TARE_OFFSET_CODE = -12450      # from calibration
+TARE_OFFSET_CODE = -12450
 SCALE_FACTOR_KG  = 0.00000812
 
 _weight_kg = 0.0
 
 def _poll_weight():
     global _weight_kg
-    # (set up GPIO / SPI exactly as in load_cell_test.py)
+    # (set up SPI + GPIO exactly as in load_cell_test.py)
     while True:
         if wait_drdy():
             frame = read_frame(spi)
@@ -304,111 +690,62 @@ def get_weight():
     return jsonify({'kg': round(_weight_kg, 4)})
 ```
 
-The delivery UI can then poll `/api/weight` and trigger return-home automatically when the value drops below threshold (item collected).
+Now the delivery UI can poll `/api/weight` and auto-trigger return-home when the value drops (item collected).
 
 ---
 
-## Step 10 — QR code readability testing
+## 13 — QR code readability test
 
-Use `qr_test.py` to verify that QR code stickers on tables are actually scannable before deploying Walter. The script tries multiple image-processing strategies and reports exactly which ones were needed.
+`qr_test.py` verifies that QR stickers on tables are scannable BEFORE Walter is deployed.
 
-### Install dependencies (Pi host)
+### 13.1 Install dependencies (Pi host)
 
 ```bash
-sudo apt-get install libzbar0        # ZBar shared library
+sudo apt-get install libzbar0
 pip3 install pyzbar opencv-python Pillow
 ```
 
-### Basic scan
+### 13.2 Basic scan
 
 ```bash
-# Scan current directory for any image files
-python3 qr_test.py
-
-# Scan a specific folder
-python3 qr_test.py --dir /path/to/qr_images
+python3 qr_test.py                       # scan current directory
+python3 qr_test.py --dir /path/to/qrs    # specific folder
 ```
 
-Sample output:
-```
-══════════════════════════════════════════════════════════════════════
-  Walter — QR Code Readability Test
-  Scanning : /home/pi/qr_images
-  Found    : 6 images
-══════════════════════════════════════════════════════════════════════
+Output:
 
+```
   [  1/6]  table_qr_1.jpg          ✅ IMMEDIATE         data='Table:1'
   [  2/6]  table_qr_2.jpg          🔧 PROCESSING
                                     transform : rotate 90°
                                     decoder   : pyzbar
                                     data      : 'Table:2'
-  [  3/6]  receipt_photo.png       🔧 PROCESSING
-                                    transform : grayscale + CLAHE + threshold
-                                    decoder   : cv2
-                                    data      : 'ORDER:42'
-  [  4/6]  blurry_sticker.jpg      🔧 PROCESSING
-                                    transform : upscale 3× + threshold
-                                    decoder   : pyzbar
-                                    data      : 'Table:7'
-  [  5/6]  torn_label.jpg          ❌ UNREADABLE        (no QR found after all strategies)
-  [  6/6]  logo.png                ❌ UNREADABLE
-
-──────────────────────────────────────────────────────────────────────
-  SUMMARY   total=6   ✅ immediate=1   🔧 with-processing=3   ❌ unreadable=2
-══════════════════════════════════════════════════════════════════════
+  [  5/6]  torn_label.jpg          ❌ UNREADABLE
 ```
 
-### Debug mode — save annotated images
+### 13.3 Other flags
 
 ```bash
-python3 qr_test.py --debug
-# Saves annotated copies to ./qr_debug/ showing the bounding box of each decoded QR
+python3 qr_test.py --debug          # save annotated images to ./qr_debug/
+python3 qr_test.py --json out.json  # machine-readable report
+python3 qr_test.py --quiet          # summary only
 ```
 
-### JSON report
-
-```bash
-python3 qr_test.py --json report.json
-```
-
-The JSON output includes per-image status, which transforms were applied, and the decoded payload — useful for automated CI or batch validation of printed labels.
-
-### All flags
-
-```bash
-python3 qr_test.py --dir ./images  # scan a folder
-python3 qr_test.py --debug         # save annotated debug images to ./qr_debug/
-python3 qr_test.py --json out.json # write machine-readable JSON report
-python3 qr_test.py --quiet         # summary line only, no per-image output
-```
-
-### What the transforms cover
-
-| Strategy | What it fixes |
-|---|---|
-| Rotate 90 / 180 / 270° | QR printed or photographed at an angle |
-| Grayscale | Colour noise confusing the decoder |
-| Invert | White-on-black or dark-background QR codes |
-| CLAHE | Low-contrast, faded, or uneven-lighting images |
-| Threshold (Otsu) | Blurry or low-contrast prints |
-| Adaptive threshold | Shadows or uneven illumination across the QR |
-| Sharpen / denoise | Camera blur or JPEG compression artefacts |
-| Upscale 2× / 3× | Small QR in a large photo, or low-res scan |
-| Crop centre 50% / 25% | QR buried inside a larger image |
-| Combos | Any combination of the above |
+The script tries every transform combination (rotate, threshold, CLAHE, sharpen, upscale, crop) and reports which one worked — so you know exactly which lighting / print conditions break a sticker.
 
 ---
 
-## Step 11 — Auto-start on boot (optional)
+## 14 — Auto-start on boot
 
-### `run_walter.sh` on boot
+### 14.1 systemd service
 
-Create `/etc/systemd/system/walter.service`:
+`/etc/systemd/system/walter.service`:
 
 ```ini
 [Unit]
 Description=Walter Robot
-After=network.target
+After=network.target docker.service
+Requires=docker.service
 
 [Service]
 User=pi
@@ -422,81 +759,112 @@ WantedBy=multi-user.target
 ```
 
 ```bash
+sudo systemctl daemon-reload
 sudo systemctl enable walter
 sudo systemctl start walter
 ```
 
-> **Note:** `web_server.py` is already started by `run_walter.sh` — you do not need a separate service for it.
+Tail the service log:
+
+```bash
+sudo journalctl -u walter -f
+```
+
+> `web_server.py` is launched **inside** `run_walter.sh` — you don't need a separate unit for it.
 
 ---
 
-## Map management
+## 15 — Map management
 
-### Save a map manually
+### 15.1 Save manually
 
 ```bash
-# From the UI — click Save Map in map.html (mapping mode only)
+# From the UI
+#   Click Save Map in map.html (mapping mode only)
 
-# Or from the terminal:
+# From the host shell
 docker exec -it walter_dev bash /ros2_ws/save_map.sh
 docker exec -it walter_dev bash /ros2_ws/save_map.sh my_custom_name
 ```
 
-### Use a different saved map
+### 15.2 Use a different saved map
 
 ```bash
-./run_walter.sh navigate my_custom_name
-# Loads maps/my_custom_name.yaml
+./run_walter.sh navigate my_custom_name   # loads maps/my_custom_name.yaml
 ```
 
-### Start over with a fresh map
+### 15.3 Start fresh
 
 ```bash
 ./run_walter.sh mapping
-# Or delete the map file so auto-detect picks mapping mode:
+# or remove the file and let auto-detect pick mapping mode:
 rm maps/room_map.yaml maps/room_map.pgm
 ./run_walter.sh
 ```
 
+### 15.4 Inspect a saved map
+
+The `.yaml` is human-readable:
+
+```yaml
+image: room_map.pgm
+resolution: 0.050000
+origin: [-15.0, -10.0, 0.0]
+occupied_thresh: 0.65
+free_thresh: 0.196
+negate: 0
+```
+
+The `.pgm` is a P5 grayscale bitmap — open in any image viewer or convert with ImageMagick.
+
 ---
 
-## Flask API reference
+## 16 — Flask API reference
 
-`web_server.py` exposes these endpoints (all on port 5000):
+All on port 5000 (`web_server.py` running on the Pi host):
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/waypoints` | Return all waypoints as JSON |
-| PUT | `/api/waypoints/<name>` | Create or update a waypoint |
+| GET | `/api/waypoints` | All waypoints as JSON |
+| PUT | `/api/waypoints/<name>` | Create or update a waypoint. Body: `{x, y, theta, label, type, ...}` |
 | DELETE | `/api/waypoints/<name>` | Delete a waypoint |
 | POST | `/api/save_map` | Trigger `save_map.sh` inside Docker. Body: `{"name": "room_map"}` |
-| GET | `/api/config` | Return server config (`delivery_wait_s`) |
+| GET | `/api/config` | Server config (currently just `delivery_wait_s`) |
+| GET | `/api/battery` | Live BQ25820 reading: `{voltage_v, current_ma, vsys_v, percent, status, charge_stat, power_good, source}` |
 
 ---
 
-## Troubleshooting
+## 17 — Troubleshooting
 
-| Symptom | Cause | Fix |
+| Symptom | Likely cause | Fix |
 |---|---|---|
-| Map not showing in browser | rosbridge not connected | Check the ROS dot in the header — should be green. Verify port 9090 is open. |
-| Map shows but is empty | Wrong mode | `editor.html` works in both modes; `map.html` needs mapping mode and SLAM running |
-| Walter ignores nav goals | Nav2 not running | Only available in navigate mode. Check `maps/room_map.yaml` exists. |
-| `flask` not found | Flask not on host | `pip3 install flask` on Pi host (not inside Docker) |
-| Port 5000 already in use | Stale web server process | `pkill -f web_server.py` then restart |
-| Face screen blank | rosbridge unreachable | Docker must run with `--network host` |
-| SLAM `Failed to compute odom pose` | Wrong `base_frame` | Must be `base_link` in `slam_params.yaml` |
-| Walter stuck or oscillating | DWB inflation radius | Increase `inflation_radius` in `config/nav2_params.yaml` |
-| `use_sim_time` error | Nav2 waiting for `/clock` | Set `use_sim_time: False` in all nav2_params.yaml nodes |
-| Scan dots misaligned from walls | Odometry drift | Expected on long runs — re-save the map after repositioning |
-| Docker container already exists | Stale container from crash | `docker rm -f walter_dev` — `run_walter.sh` does this automatically |
+| Map not showing in browser | rosbridge not connected | Check the green dot in the header. Verify port 9090 is reachable from the browser |
+| Map shows but never grows | You're in navigate mode, not mapping | `./run_walter.sh mapping` — only SLAM grows the map |
+| Map grows in Foxglove but not the web UI | rosbridge dropping `/map` because of QoS | The web UI subscribes manually with TRANSIENT_LOCAL — check the browser console for errors |
+| `diagnose_map.sh` says `/scan_filtered` missing | `lidar_filter.py` crashed | `docker exec walter_dev ps aux \| grep lidar_filter` — restart if missing |
+| Walter ignores nav goals | Not in navigate mode | Verify `maps/room_map.yaml` exists; check `/tmp/nav2.log` |
+| `flask` not found | Flask only inside Docker | `pip3 install flask` on the Pi **host** |
+| Port 5000 already in use | Stale `web_server.py` | `pkill -f web_server.py` then re-run `run_walter.sh` |
+| Face screen blank | rosbridge unreachable from browser | Docker must use `--network host` (it does by default in `run_walter.sh`) |
+| SLAM `Failed to compute odom pose` | `bridge_node.py` not publishing `/odom` | Check `/tmp/slam.log`; verify motor controller is responding on I²C 0x55 |
+| Walter stuck or oscillating in narrow corridors | DWB inflation too small | Increase `inflation_radius` in `config/nav2_params.yaml` |
+| `use_sim_time` error in Nav2 | A node has `use_sim_time: True` | Set `use_sim_time: False` everywhere in `config/nav2_params.yaml` |
+| Scan dots misaligned from walls | Odometry drift on long runs | Expected — re-save the map after repositioning the robot at the origin |
+| Docker container already exists | Stale container from a crash | `docker rm -f walter_dev` (`run_walter.sh` does this automatically) |
+| 180° turn results in 90° physical | Vertical IMU mount | `forward_return.py` already compensates with `YAW_SCALE = 2.0`; verify by reading the report |
+| `forward_return.py` says it travelled 0.1 m but tape measure says 1 m | Wheel-encoder under-reporting | `DIST_SCALE = 10.0` in the script already compensates; re-measure with `forward_return.py` |
+| Foxglove sees no topics | foxglove_bridge not running or whitelist wrong | `docker exec walter_dev tail /tmp/foxglove_bridge.log`; verify it started |
 
 ---
 
-## Hardware wiring reference
+## 18 — Hardware wiring
 
 | Component | Interface | Address / Port | Notes |
 |---|---|---|---|
-| RPLidar A1M8 | UART | `/dev/ttyAMA0` @ 115200 | Disable serial login in `raspi-config`, keep hardware UART on |
-| Motor controller | I2C | `0x55` | Requires I2C enabled in `raspi-config` |
-| LSM6DS IMU | I2C | `0x6A` | Same I2C bus as motor controller |
-| LiDAR power | GPIO | Pin 17 | Controlled by `run_walter.sh` via `pinctrl` |
+| RPLidar A1M8 | UART | `/dev/ttyAMA0` @ 115200 baud | Disable serial login in `raspi-config`, keep hardware UART enabled |
+| ESP32 motor controller | I²C | `0x55` | Same bus as IMU and battery |
+| LSM6DS IMU | I²C | `0x6A` | **Mounted vertically** — affects yaw integration (see `forward_return.py`) |
+| BQ25820 battery charger | I²C | `0x6B` | Polled by `web_server.py` via `smbus2` |
+| LiDAR power switch | GPIO | Pin 17 | `pinctrl set 17 op dh` in `run_walter.sh` |
+| Load cell ADC | SPI | CE0 (`/dev/spidev0.0`) | Manual CS on GPIO 8, DRDY on GPIO 22, RESET on GPIO 27 |
+| Battery pack | — | 8 S Li-ion | 24 V (empty) → 32 V (full); `BATTERY_MIN_V` / `BATTERY_MAX_V` in `web_server.py` |

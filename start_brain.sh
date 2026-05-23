@@ -65,10 +65,33 @@ python3 /ros2_ws/lidar_filter.py &
 echo "⏳ Waiting for hardware to settle..."
 sleep 3
 
-# --- STAGE 2: rosbridge (always) ---
-echo "📺 Starting rosbridge..."
-ros2 run rosbridge_server rosbridge_websocket > /dev/null 2>&1 &
-ros2 run rosapi rosapi_node > /dev/null 2>&1 &
+# --- STAGE 2: bridges (always) ---
+#
+# Two bridges run side-by-side:
+#   • rosbridge_websocket  (port 9090)  → used by the web UI (map.html, drive.html,
+#     logs.html, etc.).  Web UI needs /odom, /cmd_vel, /imu/data_raw, /scan,
+#     /scan_filtered and /map, so we don't whitelist here.
+#   • foxglove_bridge      (port 8765)  → used by Foxglove Studio.  Whitelisted
+#     to ONLY the four user-facing topics so the panel list stays clean:
+#         /scan, /scan_filtered, /map, and /robot (= /tf + /tf_static +
+#         /robot_description — the three topics Foxglove needs to render the
+#         robot model).
+#
+# Logs go to /tmp/<name>.log so you can tail them when something is broken:
+#     docker exec -it walter_dev tail -f /tmp/slam.log
+#     docker exec -it walter_dev tail -f /tmp/rosbridge.log
+#     docker exec -it walter_dev tail -f /tmp/foxglove_bridge.log
+echo "📺 Starting rosbridge   (port 9090, web UI)..."
+ros2 run rosbridge_server rosbridge_websocket > /tmp/rosbridge.log 2>&1 &
+ros2 run rosapi rosapi_node > /tmp/rosapi.log 2>&1 &
+
+echo "🦊 Starting foxglove_bridge (port 8765, Foxglove Studio — whitelisted)..."
+ros2 run foxglove_bridge foxglove_bridge \
+  --ros-args \
+  -p port:=8765 \
+  -p topic_whitelist:="['/scan','/scan_filtered','/map','/tf','/tf_static','/robot_description']" \
+  -p send_buffer_limit:=10000000 \
+  > /tmp/foxglove_bridge.log 2>&1 &
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MAPPING MODE — SLAM Toolbox only, no Nav2
@@ -76,8 +99,15 @@ ros2 run rosapi rosapi_node > /dev/null 2>&1 &
 # ─────────────────────────────────────────────────────────────────────────────
 if [ "$MODE" = "mapping" ]; then
     echo "🗺️  Starting SLAM Toolbox (mapping mode — no Nav2)..."
+    # Log to /tmp/slam.log instead of /dev/null so you can debug "map not
+    # accumulating" issues with:  docker exec walter_dev tail -f /tmp/slam.log
+    # Common failures visible in the log:
+    #   • "[WARN] No transform from [base_link] to [map]"  → TF tree broken
+    #   • "[WARN] Failed to compute odom pose"             → /odom not flowing
+    #   • repeated "Got scan" with no "Adding scan to graph" → minimum_travel_*
+    #     too high (robot didn't move enough between scans)
     ros2 launch slam_toolbox online_async_launch.py \
-      slam_params_file:=/ros2_ws/slam_params.yaml > /dev/null 2>&1 &
+      slam_params_file:=/ros2_ws/slam_params.yaml > /tmp/slam.log 2>&1 &
 
     echo "⏳ Waiting for SLAM to settle..."
     sleep 5
@@ -110,12 +140,13 @@ elif [ "$MODE" = "navigate" ]; then
     echo "🗺️  Starting Nav2 with saved map: ${MAP_NAME}"
     echo "    (map_server + AMCL + planner + controller — no SLAM)"
 
-    # nav2_bringup's bringup_launch includes map_server, AMCL, and full Nav2 stack
+    # nav2_bringup's bringup_launch includes map_server, AMCL, and full Nav2 stack.
+    # Logs go to /tmp/nav2.log for debugging.
     ros2 launch nav2_bringup bringup_launch.py \
       use_sim_time:=False \
       autostart:=True \
       map:="${MAP_FILE}.yaml" \
-      params_file:=/ros2_ws/config/nav2_params.yaml > /dev/null 2>&1 &
+      params_file:=/ros2_ws/config/nav2_params.yaml > /tmp/nav2.log 2>&1 &
 
     echo "⏳ Waiting for Nav2 to initialise..."
     sleep 8
